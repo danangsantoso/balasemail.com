@@ -106,10 +106,10 @@ func (r *SMTPRelay) Send(ctx context.Context, env Envelope, raw []byte) error {
 	}
 	c, err := smtp.NewClient(conn, r.Host)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return &SendError{Stage: StageConnect, Code: codeOf(err), Err: err}
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if r.HeloName != "" {
 		if err := c.Hello(r.HeloName); err != nil {
 			return &SendError{Stage: StageConnect, Code: codeOf(err), Err: err}

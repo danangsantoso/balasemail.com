@@ -105,7 +105,7 @@ func TestTwilioProvider(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"sid":"SM123"}`))
+		_, _ = w.Write([]byte(`{"sid":"SM123"}`))
 	}))
 	defer srv.Close()
 	tw := &Twilio{AccountSID: "AC1", AuthToken: "tok", From: "BALAS", BaseURL: srv.URL}

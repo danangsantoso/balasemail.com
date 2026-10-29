@@ -51,7 +51,8 @@ func Variables(tpl string) []string {
 func Spin(tpl, seed string) string {
 	h := fnv.New64a()
 	h.Write([]byte(seed))
-	r := rand.New(rand.NewPCG(h.Sum64(), 0x9e3779b97f4a7c15))
+	// Deterministic, non-security randomness: the same recipient must always get the same variant.
+	r := rand.New(rand.NewPCG(h.Sum64(), 0x9e3779b97f4a7c15)) //nolint:gosec // G404: not security-sensitive
 	return spin(tpl, r)
 }
 

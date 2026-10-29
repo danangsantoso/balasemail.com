@@ -25,3 +25,7 @@ linters:
 formatters:
   enable:
     - gofmt
+issues:
+  # Report every finding (the default hides repeats of the same issue).
+  max-issues-per-linter: 0
+  max-same-issues: 0

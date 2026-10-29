@@ -44,7 +44,7 @@ func (t *Twilio) Send(ctx context.Context, m Message) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var body struct {
 		SID     string `json:"sid"`
 		Message string `json:"message"`
@@ -86,7 +86,7 @@ func (z *Zenziva) Send(ctx context.Context, m Message) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var body struct {
 		MessageID string `json:"messageId"`
 		Status    string `json:"status"`

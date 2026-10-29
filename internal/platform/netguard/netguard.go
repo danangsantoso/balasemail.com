@@ -17,9 +17,13 @@ var ErrBlocked = errors.New("destination address is not allowed")
 
 // IsPublic reports whether ip is a globally routable unicast address.
 func IsPublic(ip net.IP) bool {
-	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast() ||
-		ip.Equal(net.IPv4bcast) || isCGNAT(ip))
+	switch {
+	case ip.IsLoopback(), ip.IsPrivate(), ip.IsLinkLocalUnicast(), ip.IsLinkLocalMulticast(),
+		ip.IsMulticast(), ip.IsUnspecified(), ip.IsInterfaceLocalMulticast(),
+		ip.Equal(net.IPv4bcast), isCGNAT(ip):
+		return false
+	}
+	return true
 }
 
 var cgnat = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}

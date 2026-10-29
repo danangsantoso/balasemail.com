@@ -347,7 +347,7 @@ func (s *Service) Import(ctx context.Context, wsID string, r io.Reader, defaultT
 		for range chunk {
 			var inserted bool
 			if err := br.QueryRow().Scan(&inserted); err != nil {
-				br.Close()
+				_ = br.Close()
 				return rep, apperr.Internal(err)
 			}
 			if inserted {

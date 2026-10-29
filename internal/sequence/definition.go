@@ -35,8 +35,6 @@ type Settings struct {
 	StopOnClick bool `json:"stop_on_click,omitempty"`
 }
 
-func (s Settings) stopOnReply() bool { return s.StopOnReply == nil || *s.StopOnReply }
-
 type Node struct {
 	ID   string   `json:"id"`
 	Type NodeType `json:"type"`

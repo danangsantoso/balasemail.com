@@ -41,7 +41,7 @@ func TestSpin(t *testing.T) {
 	if len(seen) < 2 {
 		t.Error("expected variation across seeds")
 	}
-	if Spin(tpl, "same") != Spin(tpl, "same") {
+	if first, second := Spin(tpl, "same"), Spin(tpl, "same"); first != second {
 		t.Error("spin must be deterministic per seed")
 	}
 }

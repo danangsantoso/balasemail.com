@@ -390,7 +390,7 @@ func (s *Service) HandleWebhook(ctx context.Context, job queue.Job) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 		return fmt.Errorf("webhook returned %d", resp.StatusCode)
 	}

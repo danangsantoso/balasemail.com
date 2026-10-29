@@ -54,7 +54,7 @@ func TestRobots(t *testing.T) {
 func TestCrawl(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("User-agent: *\nDisallow: /karir\n"))
+		_, _ = w.Write([]byte("User-agent: *\nDisallow: /karir\n"))
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -62,14 +62,14 @@ func TestCrawl(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<a href="/leadership-team">Team</a> <a href="https://evil.com/contact">x</a> info@acme.id`))
+		_, _ = w.Write([]byte(`<a href="/leadership-team">Team</a> <a href="https://evil.com/contact">x</a> info@acme.id`))
 	})
 	mux.HandleFunc("/leadership-team", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`Budi: budi@acme.id`))
+		_, _ = w.Write([]byte(`Budi: budi@acme.id`))
 	})
 	mux.HandleFunc("/karir", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`secret@acme.id`))
+		_, _ = w.Write([]byte(`secret@acme.id`))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()

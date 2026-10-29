@@ -257,10 +257,10 @@ func PrepareRelay(raw []byte, from string) []byte {
 	}
 	if !hasMsgID {
 		domain := from[strings.LastIndexByte(from, '@')+1:]
-		fmt.Fprintf(&out, "Message-ID: <%s@%s>\r\n", security.RandomHex(12), domain)
+		_, _ = fmt.Fprintf(&out, "Message-ID: <%s@%s>\r\n", security.RandomHex(12), domain)
 	}
 	if !hasDate {
-		fmt.Fprintf(&out, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
+		_, _ = fmt.Fprintf(&out, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
 	}
 	res := bytes.TrimRight(out.Bytes(), "\r\n")
 	return append(res, body...)

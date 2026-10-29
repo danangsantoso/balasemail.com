@@ -81,8 +81,8 @@ func NewService(db *pgxpool.Pool, q *queue.Queue, c *security.Cipher, client *ht
 // Sign computes the signature header value.
 func Sign(secret string, ts int64, body []byte) string {
 	m := hmac.New(sha256.New, []byte(secret))
-	fmt.Fprintf(m, "%d.", ts)
-	m.Write(body)
+	_, _ = fmt.Fprintf(m, "%d.", ts)
+	_, _ = m.Write(body)
 	return fmt.Sprintf("t=%d,v1=%s", ts, hex.EncodeToString(m.Sum(nil)))
 }
 
@@ -108,7 +108,8 @@ func Verify(secret, header string, body []byte, tolerance time.Duration, now tim
 
 func (s *Service) validate(rawURL string, events []string) ([]string, error) {
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && !(s.AllowHTTP && u.Scheme == "http")) {
+	devHTTP := s.AllowHTTP && u != nil && u.Scheme == "http"
+	if err != nil || u.Host == "" || (u.Scheme != "https" && !devHTTP) {
 		return nil, apperr.Invalid("invalid_url", "url must be an absolute https:// URL")
 	}
 	out := []string{}
@@ -242,7 +243,7 @@ func (s *Service) HandleDeliver(ctx context.Context, job queue.Job) error {
 	code := 0
 	if resp != nil {
 		code = resp.StatusCode
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 	errText := ""
 	if err != nil {

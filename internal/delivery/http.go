@@ -50,14 +50,15 @@ func (s *Service) handleOpen(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleClick(w http.ResponseWriter, r *http.Request) {
 	payload, ok := s.verify(r.PathValue("token"), "c:")
 	id, target, found := strings.Cut(payload, "\n")
-	if !ok || !found || !(strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "http://")) {
+	if !ok || !found || (!strings.HasPrefix(target, "https://") && !strings.HasPrefix(target, "http://")) {
 		http.Error(w, "invalid link", http.StatusBadRequest)
 		return
 	}
 	if err := s.RecordClick(r.Context(), id); err != nil {
 		slog.Error("record click", "err", err)
 	}
-	http.Redirect(w, r, target, http.StatusFound)
+	// target is covered by the HMAC signature, so this cannot be abused as an open redirect.
+	http.Redirect(w, r, target, http.StatusFound) //nolint:gosec // G710: signed URL
 }
 
 func (s *Service) handleUnsubPage(w http.ResponseWriter, r *http.Request) {

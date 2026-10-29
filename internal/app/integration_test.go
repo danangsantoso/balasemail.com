@@ -60,7 +60,7 @@ func setup(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	srv := httptest.NewUnstartedServer(a.HTTPHandler())
-	srv.Listener.Close()
+	_ = srv.Listener.Close()
 	srv.Listener = ln
 	srv.Start()
 
@@ -90,7 +90,7 @@ func (h *harness) do(method, path string, body any, want int) map[string]any {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != want {
 		h.t.Fatalf("%s %s = %d, want %d: %s", method, path, resp.StatusCode, want, raw)
@@ -144,9 +144,9 @@ func TestCampaignFlow(t *testing.T) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fw, _ := mw.CreateFormFile("file", "c.csv")
-	fw.Write([]byte("email,nama depan,perusahaan\nandi@acme.id,Andi,PT Acme\nsari@sejahtera.id,Sari,CV S\nbad,x,y\n"))
-	mw.WriteField("tags", "b2b")
-	mw.Close()
+	_, _ = fw.Write([]byte("email,nama depan,perusahaan\nandi@acme.id,Andi,PT Acme\nsari@sejahtera.id,Sari,CV S\nbad,x,y\n"))
+	_ = mw.WriteField("tags", "b2b")
+	_ = mw.Close()
 	req, _ := http.NewRequest("POST", h.srv.URL+"/v1/contacts/import", &buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+h.tok)

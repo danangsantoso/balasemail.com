@@ -163,7 +163,7 @@ func (a *App) HTTPHandler() http.Handler {
 	mux := http.NewServeMux()
 	authed := httpx.RequireAuth(a.Auth)
 
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
@@ -171,7 +171,7 @@ func (a *App) HTTPHandler() http.Handler {
 			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		w.Write([]byte("ready"))
+		_, _ = w.Write([]byte("ready"))
 	})
 
 	a.Auth.Routes(mux, authed)

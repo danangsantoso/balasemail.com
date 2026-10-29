@@ -91,8 +91,8 @@ func start(t *testing.T, inboundMode bool) (string, *fakes) {
 	if inboundMode {
 		srv = g.InboundServer("")
 	}
-	go srv.Serve(ln)
-	t.Cleanup(func() { srv.Close() })
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
 	return ln.Addr().String(), f
 }
 

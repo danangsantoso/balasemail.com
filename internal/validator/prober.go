@@ -39,14 +39,15 @@ func (p *SMTPProber) Probe(ctx context.Context, mxHost string, rcpts []string) (
 	_ = conn.SetDeadline(deadline)
 	c, err := smtp.NewClient(conn, mxHost)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if err := c.Hello(p.HeloName); err != nil {
 		return nil, err
 	}
-	if err := c.Mail(p.MailFrom); err != nil {
+	// MailFrom comes from operator config, and net/smtp rejects CR/LF in addresses.
+	if err := c.Mail(p.MailFrom); err != nil { //nolint:gosec // G707: trusted config value
 		return nil, err
 	}
 	codes := make([]int, len(rcpts))

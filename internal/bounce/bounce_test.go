@@ -118,10 +118,17 @@ func TestProcessor(t *testing.T) {
 	if !p.Accepts("fbl@BOUNCES.test") || p.Accepts("fbl@maju.co.id") {
 		t.Fatal("Accepts")
 	}
-	p.Process(context.Background(), v.Address(id), []byte(dsnHard))
-	p.Process(context.Background(), v.Address(id), []byte(dsnDelayed))
-	p.Process(context.Background(), "fbl@bounces.test", []byte(arf)) // resolved via original Message-ID
-	p.Process(context.Background(), "fbl@bounces.test", []byte(dsnHard))
+	inputs := []struct{ rcpt, raw string }{
+		{v.Address(id), dsnHard},
+		{v.Address(id), dsnDelayed},
+		{"fbl@bounces.test", arf},     // resolved via original Message-ID
+		{"fbl@bounces.test", dsnHard}, // unattributable: dropped, not an error
+	}
+	for _, in := range inputs {
+		if _, err := p.Process(context.Background(), in.rcpt, []byte(in.raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if len(rec.hard) != 1 || rec.hard[0] != id || len(rec.soft) != 1 || len(rec.complaint) != 1 || rec.complaint[0] != "msg-complaint" {
 		t.Fatalf("recorded hard=%v soft=%v complaint=%v", rec.hard, rec.soft, rec.complaint)
 	}

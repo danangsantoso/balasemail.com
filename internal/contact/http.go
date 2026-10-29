@@ -66,7 +66,8 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 // POST /v1/contacts/import — multipart form with "file" (CSV) and optional "tags".
 func (s *Service) handleImport(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
-	if err := r.ParseMultipartForm(8 << 20); err != nil {
+	// Body size is capped by MaxBytesReader above; 8MB is held in memory, the rest spills to disk.
+	if err := r.ParseMultipartForm(8 << 20); err != nil { //nolint:gosec // G120: bounded by MaxBytesReader
 		httpx.Error(w, r, apperr.Invalid("invalid_form", "expected multipart/form-data with a 'file' field (max 50MB)"))
 		return
 	}
@@ -75,7 +76,7 @@ func (s *Service) handleImport(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, apperr.Invalid("missing_file", "field 'file' is required"))
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var tags []string
 	if t := r.FormValue("tags"); t != "" {
 		tags = strings.Split(t, ",")
