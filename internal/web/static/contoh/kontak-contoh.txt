@@ -1,0 +1,9 @@
+# Contoh impor kontak BalasEmail (format TXT)
+# Satu alamat email per baris. Baris yang diawali tanda # diabaikan.
+# Format "Nama <email>" juga didukung: nama akan disimpan sebagai nama kontak.
+
+budi.santoso@example.com
+sari.wulandari@example.net
+Andi Pratama <andi.pratama@example.org>
+Dewi Lestari <dewi.lestari@example.com>
+rudi.hartono@example.net
