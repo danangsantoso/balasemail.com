@@ -37,6 +37,7 @@ import (
 	"github.com/danangsantoso/balasemail.com/internal/smtpgw"
 	"github.com/danangsantoso/balasemail.com/internal/suppression"
 	"github.com/danangsantoso/balasemail.com/internal/validator"
+	"github.com/danangsantoso/balasemail.com/internal/web"
 	"github.com/danangsantoso/balasemail.com/internal/webhook"
 	"github.com/danangsantoso/balasemail.com/migrations"
 )
@@ -86,6 +87,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	a := &App{Cfg: cfg, DB: db, Queue: q}
 	a.Auth = auth.NewService(db, security.NewJWTIssuer(cfg.JWTSecret, cfg.JWTTTL))
 	a.Domains = senderdomain.NewService(db, cipher, resolver, cfg.SPFInclude, cfg.DKIMSelector)
+	a.Domains.SkipDNS = cfg.DevSkipDNSCheck
 	a.Suppression = suppression.NewService(db)
 
 	var prober validator.Prober
@@ -188,6 +190,7 @@ func (a *App) HTTPHandler() http.Handler {
 	a.SMS.Routes(mux, authed)
 	a.Webhooks.Routes(mux, authed)
 	a.Delivery.PublicRoutes(mux)
+	web.Routes(mux)
 
 	return httpx.Chain(mux, httpx.Recover, httpx.RequestID, httpx.Observe)
 }

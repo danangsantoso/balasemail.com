@@ -22,6 +22,9 @@ type Config struct {
 	SigningSecret string // HMAC for unsubscribe/tracking/OTP hashes
 	EncryptionKey string // AES-GCM for DKIM keys & secrets at rest
 
+	// DevSkipDNSCheck treats sender-domain DNS checks as passing (ignored in production).
+	DevSkipDNSCheck bool
+
 	// AllowPrivateNetworks lets webhooks/crawler reach private IPs (development only).
 	AllowPrivateNetworks bool
 
@@ -136,6 +139,7 @@ func Load() (Config, error) {
 	}
 
 	c.AllowPrivateNetworks = envBool("OUTBOUND_ALLOW_PRIVATE", c.Env == "development")
+	c.DevSkipDNSCheck = c.Env != "production" && envBool("DEV_SKIP_DNS_CHECK", false)
 	var errs []error
 	if c.Env == "development" {
 		// Convenience defaults for local runs only.

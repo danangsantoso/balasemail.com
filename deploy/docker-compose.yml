@@ -7,6 +7,7 @@ x-app: &app
     postgres: { condition: service_healthy }
   environment:
     APP_ENV: development
+    DEV_SKIP_DNS_CHECK: "true"
     DATABASE_URL: postgres://balasemail:balasemail@postgres:5432/balasemail?sslmode=disable
     PUBLIC_BASE_URL: http://localhost:8080
     UPSTREAM_SMTP_HOST: mailpit

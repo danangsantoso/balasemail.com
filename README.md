@@ -18,6 +18,7 @@ Platform email outreach & otomasi komunikasi B2B (Golang). Spesifikasi produk ad
 | F10 Auto-forward | `internal/inbound` | Forward berbasis aturan/klasifikasi, round-robin antar sales, dikirim ulang dari domain sendiri agar lolos DMARC |
 | F11 SMS via SMTP | `internal/sms`, `internal/smtpgw` | `08xx@sms.<domain>` → SMS; normalisasi nomor Indonesia; hitung segmen GSM-7/UCS-2; Twilio/Zenziva + failover; sistem kredit |
 | M1 Deliverability | `internal/bounce`, `internal/webhook`, `internal/platform/ratelimit`, `internal/platform/netguard` | Return-path VERP, parser DSN (RFC 3464) & ARF (RFC 5965), webhook event bertanda tangan, limiter bersama lintas worker, klien HTTP anti-SSRF, cek DNS berkala |
+| Dashboard | `internal/web` | SPA tanpa dependensi yang disajikan oleh `api` di `/`: domain, kontak, finder, validasi, kampanye, sequence, inbox & aturan, alias, OTP, SMS, API key, webhook, daftar blokir |
 | §8 Kepatuhan | `internal/suppression`, `internal/delivery` | Suppression global/workspace, footer identitas pengirim wajib, hak hapus data, auto-suspend jika bounce >5% atau complaint >0,3% |
 
 ## Arsitektur singkat
@@ -73,7 +74,9 @@ make run-worker # terminal 2
 make run-smtpd  # terminal 3
 ```
 
-Contoh cepat:
+Buka **http://localhost:8080** untuk dashboard web: daftar dengan email perusahaan, tambahkan domain, impor kontak, lalu buat kampanye atau sequence. Dengan `DEV_SKIP_DNS_CHECK=true` (bawaan `.env.example` dan docker-compose), domain langsung dianggap terverifikasi, jadi email bisa terkirim ke Mailpit (**http://localhost:8025**) tanpa memasang DNS. Pengaturan ini diabaikan saat `APP_ENV=production`.
+
+Contoh lewat API:
 
 ```bash
 curl -s localhost:8080/v1/auth/register -d '{"company_name":"PT Maju","full_name":"Budi","email":"budi@maju.co.id","password":"password-kuat-123","postal_address":"Jakarta"}'

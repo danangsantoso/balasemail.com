@@ -65,6 +65,9 @@ type Service struct {
 	resolver   Resolver
 	spfInclude string
 	selector   string
+	// SkipDNS marks every record as passing. Development only: lets a local
+	// stack send to Mailpit without publishing real DNS records.
+	SkipDNS bool
 }
 
 func NewService(db *pgxpool.Pool, c *security.Cipher, r Resolver, spfInclude, selector string) *Service {
@@ -147,6 +150,11 @@ func (s *Service) Check(ctx context.Context, wsID, id string) (Domain, error) {
 		return d, err
 	}
 	d.Records = CheckDNS(ctx, s.resolver, d, s.spfInclude)
+	if s.SkipDNS {
+		for i := range d.Records {
+			d.Records[i].OK = true
+		}
+	}
 	for _, r := range d.Records {
 		switch r.Purpose {
 		case "verification":
