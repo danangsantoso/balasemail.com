@@ -22,6 +22,9 @@ type Config struct {
 	SigningSecret string // HMAC for unsubscribe/tracking/OTP hashes
 	EncryptionKey string // AES-GCM for DKIM keys & secrets at rest
 
+	// SuperAdminEmails are promoted to platform super admin when they sign in.
+	SuperAdminEmails []string
+
 	// DevSkipDNSCheck treats sender-domain DNS checks as passing (ignored in production).
 	DevSkipDNSCheck bool
 
@@ -138,6 +141,7 @@ func Load() (Config, error) {
 		},
 	}
 
+	c.SuperAdminEmails = splitList(env("SUPERADMIN_EMAILS", ""))
 	c.AllowPrivateNetworks = envBool("OUTBOUND_ALLOW_PRIVATE", c.Env == "development")
 	c.DevSkipDNSCheck = c.Env != "production" && envBool("DEV_SKIP_DNS_CHECK", false)
 	var errs []error

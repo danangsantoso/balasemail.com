@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/danangsantoso/balasemail.com/internal/admin"
 	"github.com/danangsantoso/balasemail.com/internal/alias"
 	"github.com/danangsantoso/balasemail.com/internal/auth"
 	"github.com/danangsantoso/balasemail.com/internal/bounce"
@@ -35,6 +36,7 @@ import (
 	"github.com/danangsantoso/balasemail.com/internal/sequence"
 	"github.com/danangsantoso/balasemail.com/internal/sms"
 	"github.com/danangsantoso/balasemail.com/internal/smtpgw"
+	"github.com/danangsantoso/balasemail.com/internal/stats"
 	"github.com/danangsantoso/balasemail.com/internal/suppression"
 	"github.com/danangsantoso/balasemail.com/internal/validator"
 	"github.com/danangsantoso/balasemail.com/internal/web"
@@ -63,6 +65,8 @@ type App struct {
 	Webhooks    *webhook.Service
 	Bounces     *bounce.Processor
 	Limiter     *ratelimit.Postgres
+	Stats       *stats.Service
+	Admin       *admin.Service
 }
 
 // New connects to the database, applies migrations and builds every module.
@@ -85,7 +89,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	resolver := net.DefaultResolver
 
 	a := &App{Cfg: cfg, DB: db, Queue: q}
-	a.Auth = auth.NewService(db, security.NewJWTIssuer(cfg.JWTSecret, cfg.JWTTTL))
+	a.Auth = auth.NewService(db, security.NewJWTIssuer(cfg.JWTSecret, cfg.JWTTTL), cfg.SuperAdminEmails)
 	a.Domains = senderdomain.NewService(db, cipher, resolver, cfg.SPFInclude, cfg.DKIMSelector)
 	a.Domains.SkipDNS = cfg.DevSkipDNSCheck
 	a.Suppression = suppression.NewService(db)
@@ -117,6 +121,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	a.Sequences = sequence.NewService(db, a.Delivery, a.Domains, a.Contacts, a.SMS, q, signer, outbound)
 	a.Aliases = alias.NewService(db, a.Domains)
 	a.Inbound = inbound.NewService(db, a.Delivery, a.Suppression, a.Aliases, a.Domains, inbound.KeywordClassifier{})
+	a.Stats = stats.NewService(db)
+	a.Admin = admin.NewService(db)
 	a.OTP = otp.NewService(db, a.Delivery, a.authorizeSender, a.SMS, q, signer, cipher)
 	return a, nil
 }
@@ -163,7 +169,13 @@ func smsRouter(cfg config.Config) *sms.Router {
 // HTTPHandler builds the public REST API.
 func (a *App) HTTPHandler() http.Handler {
 	mux := http.NewServeMux()
-	authed := httpx.RequireAuth(a.Auth)
+	a.routes(mux)
+	return httpx.Chain(mux, httpx.Recover, httpx.RequestID, httpx.Observe)
+}
+
+// routes registers every endpoint; Authorize applies the role policy to all authenticated ones.
+func (a *App) routes(mux *http.ServeMux) {
+	authed := httpx.RequireAuth(a.Auth, Authorize)
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -189,10 +201,10 @@ func (a *App) HTTPHandler() http.Handler {
 	a.OTP.Routes(mux, authed)
 	a.SMS.Routes(mux, authed)
 	a.Webhooks.Routes(mux, authed)
+	a.Stats.Routes(mux, authed)
+	a.Admin.Routes(mux, authed)
 	a.Delivery.PublicRoutes(mux)
 	web.Routes(mux)
-
-	return httpx.Chain(mux, httpx.Recover, httpx.RequestID, httpx.Observe)
 }
 
 // MetricsHandler serves Prometheus metrics (bind to an internal port).

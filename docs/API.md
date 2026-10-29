@@ -4,9 +4,13 @@ Semua endpoint `/v1/*`, kecuali register/login, membutuhkan `Authorization: Bear
 
 | Method & path | Fitur | Keterangan |
 |---|---|---|
-| `POST /v1/auth/register` | F5 | Wajib email bisnis; membuat workspace + owner |
+| `POST /v1/auth/register` | F5 | Wajib email bisnis; membuat workspace (tenant) + admin |
 | `POST /v1/auth/login` | | |
-| `GET /v1/me` | | User + workspace (kuota, kredit SMS) |
+| `GET /v1/me` | | User (`role`, `platform_role`) + workspace (kuota, kredit SMS) |
+| `GET /v1/stats/overview?days=14` | | Seri harian terkirim/dibuka/diklik/dibalas (1–90 hari), total + periode sebelumnya, klasifikasi balasan, kualitas kontak |
+| `GET/POST /v1/team`, `PATCH /v1/team/{id}` | | Anggota workspace. Tambah/ubah hanya **admin**; `{role: admin\|user, disabled}`; admin aktif terakhir tidak bisa diturunkan |
+| `GET /v1/admin/overview?days=30` | | **Super admin**: ringkasan platform, tenant baru per hari, tenant teratas, sebaran paket |
+| `GET /v1/admin/tenants?q=&status=`, `PATCH /v1/admin/tenants/{id}` | | **Super admin**: `{status: active\|suspended, plan, daily_send_limit, add_sms_credits}` |
 | `GET/POST /v1/api-keys`, `DELETE /v1/api-keys/{id}` | F4/F6 | API key juga dipakai sebagai password SMTP |
 | `GET/POST /v1/domains`, `GET /v1/domains/{id}` | F5 | Respons berisi `dns_records` yang perlu dipasang |
 | `POST /v1/domains/{id}/check` | F5 | Cek ulang TXT verifikasi, SPF, DKIM, DMARC |
@@ -36,6 +40,18 @@ Semua endpoint `/v1/*`, kecuali register/login, membutuhkan `Authorization: Bear
 | `GET /t/o/{token}`, `GET /t/c/{token}` | F7 | Tracking (publik) |
 | `GET/POST /u/{token}` | §8 | Unsubscribe 1-klik (publik) |
 | `GET /healthz`, `GET /readyz` | | Probe |
+
+## Peran & multi-tenant
+
+Setiap workspace adalah satu **tenant**; semua data (kontak, kampanye, inbox, domain, …) selalu difilter dengan `workspace_id` dari token, sehingga satu tenant tidak bisa melihat data tenant lain.
+
+| Peran | Cakupan | Bisa |
+|---|---|---|
+| `superadmin` (`platform_role`) | Seluruh platform | `/v1/admin/*`: melihat semua tenant, ubah paket/kuota, tambah kredit SMS, tangguhkan tenant. Diberikan ke email di `SUPERADMIN_EMAILS` saat login; tidak berlaku lewat API key |
+| `admin` | Satu tenant | Semua fitur + domain, API key, webhook, tim, alias, aturan inbound, hapus suppression |
+| `user` | Satu tenant | Pekerjaan harian: cari/validasi/impor kontak, kampanye, sequence, inbox, OTP, SMS |
+
+Endpoint yang ditolak mengembalikan `403 forbidden`. Peran dan status dibaca ulang dari database di setiap request, sehingga menurunkan peran/menonaktifkan user berlaku seketika. Tenant yang ditangguhkan mendapat `403 workspace_suspended`.
 
 ## Impor kontak
 

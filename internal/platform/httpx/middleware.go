@@ -95,8 +95,12 @@ type Authenticator interface {
 	Authenticate(ctx context.Context, bearer string) (authctx.Principal, error)
 }
 
-// RequireAuth rejects requests without a valid bearer credential.
-func RequireAuth(a Authenticator) Middleware {
+// Policy authorizes a principal for a route pattern ("POST /v1/domains").
+type Policy func(p authctx.Principal, pattern string) error
+
+// RequireAuth rejects requests without a valid bearer credential, then
+// applies the role policy for the matched route.
+func RequireAuth(a Authenticator, policy Policy) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := r.Header.Get("Authorization")
@@ -109,6 +113,12 @@ func RequireAuth(a Authenticator) Middleware {
 			if err != nil {
 				Error(w, r, err)
 				return
+			}
+			if policy != nil {
+				if err := policy(p, r.Pattern); err != nil {
+					Error(w, r, err)
+					return
+				}
 			}
 			next.ServeHTTP(w, r.WithContext(authctx.With(r.Context(), p)))
 		})

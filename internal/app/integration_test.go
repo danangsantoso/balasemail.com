@@ -349,3 +349,101 @@ func TestQueueRetryAfterKeepsAttempts(t *testing.T) {
 		return h.scalar(`SELECT status||'/'||attempts||'/'||(run_at > now() + interval '50 minutes') FROM jobs WHERE kind='test.throttled'`) == "queued/0/true"
 	})
 }
+
+func (h *harness) login(email, password string) string {
+	h.t.Helper()
+	h.tok = ""
+	s := h.do("POST", "/v1/auth/login", map[string]string{"email": email, "password": password}, 200)
+	h.tok = s["token"].(string)
+	return h.tok
+}
+
+func (h *harness) register(company, email string) string {
+	h.t.Helper()
+	h.tok = ""
+	s := h.do("POST", "/v1/auth/register", map[string]string{"company_name": company, "full_name": "Admin " + company,
+		"email": email, "password": "password-kuat-123"}, 201)
+	h.tok = s["token"].(string)
+	return h.tok
+}
+
+func TestMultiTenantRoles(t *testing.T) {
+	t.Setenv("SUPERADMIN_EMAILS", "root@platform.co.id")
+	h := setup(t)
+
+	// Tenant A: admin adds a regular user.
+	adminA := h.register("PT Maju", "budi@maju.co.id")
+	h.do("POST", "/v1/contacts", map[string]any{"email": "klien@contoh.co.id"}, 200)
+	member := h.do("POST", "/v1/team", map[string]string{"email": "sari@maju.co.id", "full_name": "Sari", "role": "user", "password": "password-sari-123"}, 201)
+	h.do("POST", "/v1/team", map[string]string{"email": "x@gmail.com", "full_name": "X", "password": "password-sari-123"}, 422)
+	me := h.do("GET", "/v1/me", nil, 200)
+	selfID := me["user"].(map[string]any)["id"].(string)
+	h.do("PATCH", "/v1/team/"+selfID, map[string]any{"role": "user"}, 422) // cannot demote yourself
+
+	// Regular user: operational routes yes, admin routes no.
+	userA := h.login("sari@maju.co.id", "password-sari-123")
+	h.do("POST", "/v1/contacts", map[string]any{"email": "prospek@contoh.co.id"}, 200)
+	h.do("GET", "/v1/team", nil, 200)
+	h.do("POST", "/v1/domains", map[string]string{"name": "maju.co.id"}, 403)
+	h.do("POST", "/v1/api-keys", map[string]string{"name": "k"}, 403)
+	h.do("PATCH", "/v1/team/"+selfID, map[string]any{"role": "user"}, 403)
+	h.do("GET", "/v1/admin/tenants", nil, 403)
+
+	// Tenant B cannot see tenant A's data.
+	h.register("PT Acme", "andi@acme.co.id")
+	if got := h.do("GET", "/v1/contacts", nil, 200)["data"].([]any); len(got) != 0 {
+		t.Fatalf("tenant B sees %d contacts of tenant A", len(got))
+	}
+	h.do("GET", "/v1/admin/overview", nil, 403)
+	tokB := h.tok
+
+	// Admin A disables the user; the existing session stops working at once.
+	h.tok = adminA
+	h.do("PATCH", "/v1/team/"+member["id"].(string), map[string]any{"disabled": true}, 200)
+	h.tok = userA
+	h.do("GET", "/v1/contacts", nil, 403)
+
+	// Super admin manages tenants.
+	h.register("Platform", "root@platform.co.id")
+	if me := h.do("GET", "/v1/me", nil, 200); me["user"].(map[string]any)["platform_role"] != "superadmin" {
+		t.Fatalf("superadmin not promoted: %v", me["user"])
+	}
+	tenants := h.do("GET", "/v1/admin/tenants", nil, 200)["data"].([]any)
+	if len(tenants) != 3 {
+		t.Fatalf("tenants = %d, want 3", len(tenants))
+	}
+	var acmeID, majuID string
+	for _, x := range tenants {
+		m := x.(map[string]any)
+		switch m["name"] {
+		case "PT Acme":
+			acmeID = m["id"].(string)
+		case "PT Maju":
+			majuID = m["id"].(string)
+			if m["contacts"].(float64) != 2 || m["users"].(float64) != 2 {
+				t.Errorf("PT Maju usage = %v", m)
+			}
+		}
+	}
+	h.do("PATCH", "/v1/admin/tenants/"+acmeID, map[string]any{"status": "suspended"}, 200)
+	updated := h.do("PATCH", "/v1/admin/tenants/"+majuID, map[string]any{"plan": "growth", "daily_send_limit": 5000, "add_sms_credits": 250}, 200)
+	if updated["plan"] != "growth" || updated["sms_credits"].(float64) != 250 || updated["daily_send_limit"].(float64) != 5000 {
+		t.Fatalf("update = %v", updated)
+	}
+	h.do("PATCH", "/v1/admin/tenants/"+majuID, map[string]any{"plan": "gratis"}, 422)
+	ov := h.do("GET", "/v1/admin/overview?days=7", nil, 200)
+	if ov["tenants"].(float64) != 3 || ov["suspended"].(float64) != 1 || len(ov["series"].([]any)) != 7 {
+		t.Fatalf("overview = %v", ov)
+	}
+
+	// The suspended tenant is locked out.
+	h.tok = tokB
+	h.do("GET", "/v1/contacts", nil, 403)
+
+	// Tenant dashboard stats.
+	h.tok = adminA
+	st := h.do("GET", "/v1/stats/overview?days=14", nil, 200)
+	if len(st["series"].([]any)) != 14 {
+		t.Fatalf("stats series = %v", st["series"])
+	}
+}

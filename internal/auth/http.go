@@ -17,6 +17,7 @@ func (s *Service) Routes(mux *http.ServeMux, authed httpx.Middleware) {
 	mux.Handle("GET /v1/api-keys", authed(http.HandlerFunc(s.handleListKeys)))
 	mux.Handle("POST /v1/api-keys", authed(http.HandlerFunc(s.handleCreateKey)))
 	mux.Handle("DELETE /v1/api-keys/{id}", authed(http.HandlerFunc(s.handleRevokeKey)))
+	s.teamRoutes(mux, authed)
 }
 
 func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -60,8 +61,8 @@ func (s *Service) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func requireAdmin(p authctx.Principal) error {
-	if p.Role != "owner" && p.Role != "admin" {
-		return apperr.Forbidden("forbidden", "owner or admin role required")
+	if !p.IsAdmin() {
+		return apperr.Forbidden("forbidden", "admin role required")
 	}
 	return nil
 }

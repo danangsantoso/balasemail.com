@@ -30,7 +30,7 @@ Setiap milestone baru dianggap selesai kalau CI hijau, cakupan test tidak turun,
 |---|---|---|---|
 | M0 | **Fondasi** ✅ | Struktur repo, platform, migrasi, CI, 11 modul inti | `make test` + `make cover` ≥55% lulus; ke-3 integration test lulus |
 | M1 | **Deliverability produksi** ✅ (kode) | Parser DSN/ARF lewat VERP; webhook event pelanggan; cek DNS berkala; limiter bersama (PostgreSQL) | ✅ bounce/complaint tercatat saat DSN/ARF diterima, tervalidasi oleh integration test · ⬜ alert `HardBounceRateHigh` dan `SpamComplaintRateHigh` aktif di staging (butuh deploy + MX `BOUNCE_DOMAIN` + pendaftaran FBL) |
-| M2 | **Dashboard MVP** | Frontend Next.js: onboarding domain, kontak, kampanye, inbox | Daftar sampai kampanye pertama terkirim < 30 menit (uji 5 pengguna) |
+| M2 | **Dashboard MVP** (sebagian ✅: SPA tertanam, grafik, peran Super Admin/Admin/User, konsol tenant) | Onboarding domain, kontak, kampanye, inbox | Daftar sampai kampanye pertama terkirim < 30 menit (uji 5 pengguna) |
 | M3 | **Funnel builder & A/B** | Builder visual, pemenang A/B otomatis (uji signifikansi), template | Sequence ≥10 tahap & ≥2 cabang bisa dibuat dari UI; berhenti ≤5 menit setelah balasan (sudah: sinkron saat inbound) |
 | M4 | **Billing & kuota** | Paket, VA/QRIS/e-wallet, top-up kredit SMS, kuota naik bertahap mengikuti reputasi | Upgrade paket langsung menaikkan `daily_send_limit`; kredit SMS bertambah setelah callback pembayaran |
 | M5 | **AI inbox** | Classifier LLM di balik `inbound.Classifier`, draf balasan dengan persetujuan | Akurasi klasifikasi ≥90% pada 500 balasan berlabel; dibandingkan dengan baseline kata kunci |

@@ -31,12 +31,21 @@ type Workspace struct {
 }
 
 type User struct {
-	ID          string    `json:"id"`
-	WorkspaceID string    `json:"workspace_id"`
-	Email       string    `json:"email"`
-	FullName    string    `json:"full_name"`
-	Role        string    `json:"role"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID           string     `json:"id"`
+	WorkspaceID  string     `json:"workspace_id"`
+	Email        string     `json:"email"`
+	FullName     string     `json:"full_name"`
+	Role         string     `json:"role"`
+	PlatformRole string     `json:"platform_role,omitempty"`
+	Disabled     bool       `json:"disabled"`
+	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+const userCols = `id, workspace_id, email, full_name, role, platform_role, disabled_at IS NOT NULL, last_login_at, created_at`
+
+func scanUser(row pgx.Row, u *User, extra ...any) error {
+	return row.Scan(append([]any{&u.ID, &u.WorkspaceID, &u.Email, &u.FullName, &u.Role, &u.PlatformRole, &u.Disabled, &u.LastLoginAt, &u.CreatedAt}, extra...)...)
 }
 
 type APIKey struct {
@@ -65,10 +74,18 @@ type RegisterInput struct {
 type Service struct {
 	db  *pgxpool.Pool
 	jwt *security.JWTIssuer
+	// superAdmins are emails promoted to platform super admin on sign-in (SUPERADMIN_EMAILS).
+	superAdmins map[string]bool
 }
 
-func NewService(db *pgxpool.Pool, jwt *security.JWTIssuer) *Service {
-	return &Service{db: db, jwt: jwt}
+func NewService(db *pgxpool.Pool, jwt *security.JWTIssuer, superAdminEmails []string) *Service {
+	sa := map[string]bool{}
+	for _, e := range superAdminEmails {
+		if n, err := emailaddr.Normalize(e); err == nil {
+			sa[n] = true
+		}
+	}
+	return &Service{db: db, jwt: jwt, superAdmins: sa}
 }
 
 // ValidateRegistration enforces the business-email-only rule (PRD F5).
@@ -108,12 +125,11 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (Session, erro
 			strings.TrimSpace(in.CompanyName), strings.TrimSpace(in.PostalAddress)).Scan(&wsID); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `
+		return scanUser(tx.QueryRow(ctx, `
 			INSERT INTO users (workspace_id, email, full_name, password_hash, role)
-			VALUES ($1,$2,$3,$4,'owner')
-			RETURNING id, workspace_id, email, full_name, role, created_at`,
-			wsID, addr.String(), strings.TrimSpace(in.FullName), hash,
-		).Scan(&u.ID, &u.WorkspaceID, &u.Email, &u.FullName, &u.Role, &u.CreatedAt)
+			VALUES ($1,$2,$3,$4,'admin')
+			RETURNING `+userCols,
+			wsID, addr.String(), strings.TrimSpace(in.FullName), hash), &u)
 	})
 	if database.IsUniqueViolation(err) {
 		return Session{}, apperr.Conflict("email_taken", "an account with this email already exists")
@@ -128,19 +144,26 @@ func (s *Service) Login(ctx context.Context, email, password string) (Session, e
 	norm, _ := emailaddr.Normalize(email)
 	var u User
 	var hash string
-	err := s.db.QueryRow(ctx, `
-		SELECT id, workspace_id, email, full_name, role, created_at, password_hash FROM users WHERE email=$1`, norm,
-	).Scan(&u.ID, &u.WorkspaceID, &u.Email, &u.FullName, &u.Role, &u.CreatedAt, &hash)
+	err := scanUser(s.db.QueryRow(ctx, `SELECT `+userCols+`, password_hash FROM users WHERE email=$1`, norm), &u, &hash)
 	if err != nil && !database.IsNoRows(err) {
 		return Session{}, apperr.Internal(err)
 	}
 	if err != nil || !security.CheckPassword(hash, password) {
 		return Session{}, apperr.Unauthorized("invalid_credentials", "email or password is incorrect")
 	}
+	if u.Disabled {
+		return Session{}, apperr.Forbidden("user_disabled", "this account has been disabled by your administrator")
+	}
+	_, _ = s.db.Exec(ctx, `UPDATE users SET last_login_at=now() WHERE id=$1`, u.ID)
 	return s.session(u)
 }
 
 func (s *Service) session(u User) (Session, error) {
+	if s.superAdmins[u.Email] && u.PlatformRole != authctx.RoleSuperAdmin {
+		if _, err := s.db.Exec(context.Background(), `UPDATE users SET platform_role='superadmin' WHERE id=$1`, u.ID); err == nil {
+			u.PlatformRole = authctx.RoleSuperAdmin
+		}
+	}
 	tok, exp, err := s.jwt.Issue(u.ID, u.WorkspaceID, u.Role)
 	if err != nil {
 		return Session{}, apperr.Internal(err)
@@ -157,7 +180,24 @@ func (s *Service) Authenticate(ctx context.Context, bearer string) (authctx.Prin
 	if err != nil {
 		return authctx.Principal{}, apperr.Unauthorized("invalid_token", "session token is invalid or expired")
 	}
-	return authctx.Principal{UserID: c.Subject, WorkspaceID: c.WorkspaceID, Role: c.Role}, s.checkActive(ctx, c.WorkspaceID)
+	// Role and status are read fresh so demotions and deactivations apply immediately.
+	p := authctx.Principal{UserID: c.Subject, WorkspaceID: c.WorkspaceID}
+	var disabled bool
+	var wsStatus string
+	err = s.db.QueryRow(ctx, `SELECT u.role, u.platform_role, u.disabled_at IS NOT NULL, w.status
+		FROM users u JOIN workspaces w ON w.id = u.workspace_id WHERE u.id=$1 AND u.workspace_id=$2`, c.Subject, c.WorkspaceID).
+		Scan(&p.Role, &p.PlatformRole, &disabled, &wsStatus)
+	switch {
+	case database.IsNoRows(err):
+		return p, apperr.Unauthorized("invalid_token", "account no longer exists")
+	case err != nil:
+		return p, apperr.Internal(err)
+	case disabled:
+		return p, apperr.Forbidden("user_disabled", "this account has been disabled by your administrator")
+	case wsStatus != "active" && !p.IsSuperAdmin():
+		return p, apperr.Forbidden("workspace_suspended", "workspace is suspended; contact support")
+	}
+	return p, nil
 }
 
 // AuthenticateAPIKey validates "bm_<prefix>_<secret>" keys (also used as SMTP passwords).
@@ -179,7 +219,7 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, key string) (authctx.P
 		return authctx.Principal{}, bad
 	}
 	_, _ = s.db.Exec(ctx, `UPDATE api_keys SET last_used_at=now() WHERE id=$1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')`, id)
-	return authctx.Principal{WorkspaceID: wsID, Role: "admin", APIKeyID: id}, s.checkActive(ctx, wsID)
+	return authctx.Principal{WorkspaceID: wsID, Role: authctx.RoleAdmin, APIKeyID: id}, s.checkActive(ctx, wsID)
 }
 
 func (s *Service) checkActive(ctx context.Context, wsID string) error {
@@ -197,8 +237,7 @@ func (s *Service) Me(ctx context.Context, p authctx.Principal) (User, Workspace,
 	var u User
 	var w Workspace
 	if p.UserID != "" {
-		if err := s.db.QueryRow(ctx, `SELECT id, workspace_id, email, full_name, role, created_at FROM users WHERE id=$1`, p.UserID).
-			Scan(&u.ID, &u.WorkspaceID, &u.Email, &u.FullName, &u.Role, &u.CreatedAt); err != nil {
+		if err := scanUser(s.db.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE id=$1`, p.UserID), &u); err != nil {
 			return u, w, apperr.NotFound("user_not_found", "user not found")
 		}
 	}

@@ -119,9 +119,9 @@ const badge = (s) => h("span", { class: "badge " + (statusClass[s] || "") }, sta
 
 function table(cols, rows, emptyText) {
   if (!rows || rows.length === 0) return h("div", { class: "empty" }, emptyText || "Belum ada data.");
-  return h("table", {},
+  return h("div", { class: "table-wrap" }, h("table", {},
     h("thead", {}, h("tr", {}, cols.map((c) => h("th", {}, c.label)))),
-    h("tbody", {}, rows.map((r) => h("tr", {}, cols.map((c) => h("td", { class: c.mono ? "mono" : "" }, c.render ? c.render(r) : (r[c.key] ?? "—")))))));
+    h("tbody", {}, rows.map((r) => h("tr", {}, cols.map((c) => h("td", { class: c.mono ? "mono" : "" }, c.render ? c.render(r) : (r[c.key] ?? "—"))))))));
 }
 
 // form renders labelled fields and calls onSubmit with their values.
@@ -149,43 +149,111 @@ function form(fields, submitLabel, onSubmit, extra) {
 
 const csv = (s) => (s || "").split(",").map((x) => x.trim()).filter(Boolean);
 const card = (title, ...kids) => h("div", { class: "card" }, title ? h("h2", {}, title) : null, ...kids);
+const isAdmin = () => me && me.user.role === "admin";
+const isSuper = () => me && me.user.platform_role === "superadmin";
+const roleLabel = () => isSuper() ? "Super Admin" : isAdmin() ? "Admin" : "User";
+const rolePill = () => h("span", { class: "role-pill" + (isSuper() ? " super" : "") }, roleLabel());
 const page = (title, sub, ...kids) => [h("div", { class: "topbar" }, h("div", {}, h("h1", {}, title), h("p", { class: "sub" }, sub)),
-  me ? h("div", { class: "who" }, me.user.full_name || "", h("br"), me.workspace.name) : null), ...kids];
+  me ? rolePill() : null), ...kids];
+const adminNote = (what) => h("div", { class: "callout" }, `Hanya admin workspace yang dapat ${what}. Hubungi admin Anda bila perlu.`);
 
 // ---------- pages ----------
 const pages = {};
 
+// Series order is fixed (validated palette order): never reassign colours by rank.
+const ENGAGEMENT = [
+  { key: "sent", name: "Terkirim", color: "--s1" },
+  { key: "opened", name: "Dibuka", color: "--s2" },
+  { key: "clicked", name: "Diklik", color: "--s3" },
+  { key: "replied", name: "Dibalas", color: "--s4" },
+];
+const CLASS_LABEL = { interested: "Tertarik", question: "Bertanya", not_interested: "Tidak tertarik", out_of_office: "Sedang cuti",
+  wrong_person: "Salah orang", unsubscribe: "Minta berhenti", other: "Lainnya", automated: "Otomatis", unknown: "Tidak diketahui" };
+const VALIDATION = [
+  { key: "valid", label: "Valid", color: "--st-good" },
+  { key: "risky", label: "Berisiko", color: "--st-warn" },
+  { key: "unknown", label: "Tidak pasti", color: "--st-warn" },
+  { key: "invalid", label: "Tidak valid", color: "--st-bad" },
+  { key: "disposable", label: "Sementara", color: "--st-bad" },
+  { key: "unverified", label: "Belum dicek", color: "--st-neutral" },
+];
+
+function delta(cur, prev, upIsGood = true) {
+  if (!prev && !cur) return h("span", { class: "delta flat" }, "— sama seperti periode sebelumnya");
+  if (!prev) return h("span", { class: "delta up" }, "▲ baru");
+  const ch = (cur - prev) / prev;
+  if (Math.abs(ch) < 0.005) return h("span", { class: "delta flat" }, "● stabil");
+  const good = (ch > 0) === upIsGood;
+  return h("span", { class: "delta " + (good ? "up" : "down") }, `${ch > 0 ? "▲" : "▼"} ${Math.abs(ch * 100).toFixed(0)}% vs periode lalu`);
+}
+
+function statTile({ icon, chip, label, value, hint, trend, color }) {
+  return h("div", { class: "card stat" },
+    h("div", { class: "top" }, h("div", { class: "chip " + chip }, icon), trend ? Charts.spark(trend, color) : null),
+    h("div", { class: "label" }, label),
+    h("div", { class: "value" }, value),
+    h("div", { class: "hint" }, hint));
+}
+
+let overviewDays = 14;
+
 pages.overview = async () => {
-  const [domains, campaigns, contacts, inbox] = await Promise.all([
-    api("GET", "/v1/domains"), api("GET", "/v1/campaigns?limit=5"), api("GET", "/v1/contacts?limit=200"), api("GET", "/v1/inbox?limit=5"),
+  const [st, domains, campaigns, inbox] = await Promise.all([
+    api("GET", "/v1/stats/overview?days=" + overviewDays), api("GET", "/v1/domains"),
+    api("GET", "/v1/campaigns?limit=5"), api("GET", "/v1/inbox?limit=5"),
   ]);
-  const w = me.workspace;
+  const w = me.workspace, t = st.totals, p = st.previous;
+  const rate = (a, b) => b ? (a / b * 100).toFixed(1) + "%" : "0%";
+  const col = (k) => st.series.map((d) => d[k]);
   const ready = domains.data.filter((d) => d.verified && d.spf_ok && d.dkim_ok).length;
-  const stat = (label, value, hint) => h("div", { class: "card stat" }, h("div", { class: "label" }, label), h("div", { class: "value" }, value), h("div", { class: "hint" }, hint));
+  const contactsTotal = st.contacts.reduce((a, c) => a + c.count, 0);
   const steps = [
     ["Tambahkan & verifikasi domain bisnis", ready > 0, "#/domains"],
-    ["Impor atau tambah kontak", contacts.data.length > 0, "#/contacts"],
+    ["Impor atau tambah kontak", contactsTotal > 0, "#/contacts"],
     ["Buat dan luncurkan kampanye", campaigns.data.some((c) => c.status !== "draft"), "#/campaigns"],
   ];
-  return page("Ringkasan", "Status workspace dan langkah berikutnya.",
+  const firstName = (me.user.full_name || "").split(" ")[0] || "Anda";
+  const range = h("div", { class: "seg" }, [7, 14, 30].map((d) =>
+    h("button", { type: "button", class: d === overviewDays ? "on" : "", onclick: () => { overviewDays = d; route(); } }, d + " hari")));
+
+  return [
+    h("div", { class: "hero" },
+      h("div", { class: "row spread" },
+        h("div", {}, h("h1", {}, `Halo, ${firstName} 👋`),
+          h("p", {}, h("span", { class: "dot-live" }), `${w.name} · ${t.sent.toLocaleString("id-ID")} email terkirim dan ${t.replied.toLocaleString("id-ID")} balasan dalam ${overviewDays} hari terakhir.`)),
+        rolePill()),
+      h("div", { class: "actions" },
+        h("button", { class: "btn-light", onclick: () => { location.hash = "#/campaigns"; } }, "+ Kampanye baru"),
+        h("button", { class: "btn-ghost", onclick: () => { location.hash = "#/contacts"; } }, "Impor kontak"),
+        h("button", { class: "btn-ghost", onclick: () => { location.hash = "#/inbox"; } }, "Buka inbox"))),
     h("div", { class: "grid cols-4" },
-      stat("Domain siap kirim", ready + " / " + domains.data.length, "SPF + DKIM terverifikasi"),
-      stat("Kontak", contacts.data.length >= 200 ? "200+" : contacts.data.length, "di workspace ini"),
-      stat("Kuota harian", w.daily_send_limit, "email marketing/sequence"),
-      stat("Kredit SMS", w.sms_credits, "segmen tersisa")),
+      statTile({ icon: "✉️", chip: "c1", label: "Email terkirim", value: Charts.full(t.sent), hint: delta(t.sent, p.sent), trend: col("sent"), color: "--s1" }),
+      statTile({ icon: "👀", chip: "c2", label: "Tingkat dibuka", value: rate(t.opened, t.sent), hint: `${Charts.full(t.opened)} penerima membuka`, trend: col("opened"), color: "--s2" }),
+      statTile({ icon: "🖱️", chip: "c3", label: "Tingkat klik", value: rate(t.clicked, t.sent), hint: `${Charts.full(t.clicked)} penerima mengklik`, trend: col("clicked"), color: "--s3" }),
+      statTile({ icon: "💬", chip: "c4", label: "Tingkat balasan", value: rate(t.replied, t.sent), hint: delta(t.replied, p.replied), trend: col("replied"), color: "--s4" })),
+    h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("div", {}, h("h2", {}, "Aktivitas email harian"),
+        h("p", { class: "help" }, "Per hari pengiriman: dari email yang terkirim hari itu, berapa yang dibuka, diklik, dan dibalas.")), range),
+      Charts.line({ labels: st.series.map((d) => d.date), series: ENGAGEMENT.map((e) => ({ ...e, values: col(e.key) })) })),
+    h("div", { class: "grid cols-3" },
+      card("Klasifikasi balasan", Charts.hbars({ items: st.replies.map((r) => ({ label: CLASS_LABEL[r.key] || r.key, value: r.count })), empty: "Belum ada balasan pada periode ini." })),
+      card("Kualitas daftar kontak", Charts.stack100({ items: VALIDATION.map((v) => ({ label: v.label, color: v.color, value: (st.contacts.find((c) => c.key === v.key) || { count: 0 }).count })), empty: "Belum ada kontak." }),
+        h("p", { class: "help" }, `${Charts.full(contactsTotal)} kontak · kuota harian ${Charts.full(w.daily_send_limit)} email · kredit SMS ${Charts.full(w.sms_credits)}`)),
+      card("Mulai di sini", h("div", { class: "stack" }, steps.map(([label, done, href]) =>
+        h("div", { class: "row spread" }, h("a", { href }, label), ok(done, "Selesai", "Belum")))),
+        h("p", { class: "help", style: "margin-top:14px" }, `Bounce ${rate(t.bounced, t.sent)} · berhenti langganan ${Charts.full(t.unsubscribed)}`))),
     h("div", { class: "grid cols-2" },
-      card("Mulai di sini", h("div", { class: "stack" }, steps.map(([t, done, href]) =>
-        h("div", { class: "row spread" }, h("a", { href }, t), ok(done, "Selesai", "Belum"))))),
+      card("Kampanye terbaru", table([
+        { label: "Nama", render: (r) => h("a", { href: "#/campaigns/" + r.id }, r.name) },
+        { label: "Status", render: (r) => badge(r.status) },
+        { label: "Dibuat", render: (r) => fmtDate(r.created_at) },
+      ], campaigns.data, "Belum ada kampanye.")),
       card("Balasan terbaru", table([
         { label: "Dari", render: (r) => r.from_name || r.from },
         { label: "Subjek", key: "subject" },
         { label: "Klasifikasi", render: (r) => badge(r.classification) },
       ], inbox.data, "Belum ada balasan masuk."))),
-    card("Kampanye terbaru", table([
-      { label: "Nama", render: (r) => h("a", { href: "#/campaigns/" + r.id }, r.name) },
-      { label: "Status", render: (r) => badge(r.status) },
-      { label: "Dibuat", render: (r) => fmtDate(r.created_at) },
-    ], campaigns.data, "Belum ada kampanye.")));
+  ];
 };
 
 pages.domains = async () => {
@@ -196,7 +264,7 @@ pages.domains = async () => {
       h("div", { class: "row spread" },
         h("div", {}, h("h2", { style: "margin:0" }, d.name), h("div", { class: "help" }, "Dicek: " + fmtDate(d.last_checked_at))),
         h("div", { class: "row" }, ok(d.verified && d.spf_ok && d.dkim_ok, "Siap kirim", "Belum siap"),
-          h("button", { onclick: (e) => run(e.target, async () => { await api("POST", "/v1/domains/" + d.id + "/check"); toast("DNS dicek ulang"); route(); }) }, "Cek DNS"))),
+          isAdmin() ? h("button", { onclick: (e) => run(e.target, async () => { await api("POST", "/v1/domains/" + d.id + "/check"); toast("DNS dicek ulang"); route(); }) }, "Cek DNS") : null)),
       h("p", { class: "help" }, "Pasang record berikut di DNS domain Anda:"),
       table([
         { label: "Fungsi", key: "purpose" },
@@ -209,8 +277,8 @@ pages.domains = async () => {
   };
   render(list.data);
   return page("Domain pengirim", "Hanya domain bisnis yang terverifikasi yang bisa dipakai mengirim (SPF, DKIM, DMARC).",
-    card("Tambah domain", form([{ name: "name", label: "Nama domain", placeholder: "perusahaan.co.id", required: true }], "Tambah",
-      async (v) => { await api("POST", "/v1/domains", { name: v.name }); toast("Domain ditambahkan"); route(); })),
+    isAdmin() ? card("Tambah domain", form([{ name: "name", label: "Nama domain", placeholder: "perusahaan.co.id", required: true }], "Tambah",
+      async (v) => { await api("POST", "/v1/domains", { name: v.name }); toast("Domain ditambahkan"); route(); })) : adminNote("menambah atau mengecek domain"),
     box);
 };
 
@@ -470,7 +538,7 @@ pages.inbox = async () => {
         { label: "Balasan kampanye?", render: (r) => r.related_message_id ? h("span", { class: "badge ok" }, "ya") : "—" },
       ], items.data, "Belum ada email masuk. Kirim email ke alamat di domain Anda yang terverifikasi.")),
     h("div", { class: "grid cols-2" },
-      card("Tambah aturan", form([
+      !isAdmin() ? card("Tambah aturan", adminNote("membuat aturan auto-reply dan forward")) : card("Tambah aturan", form([
         { name: "name", label: "Nama aturan", required: true, full: true },
         { name: "type", label: "Aksi", type: "select", options: [["auto_reply", "Balas otomatis"], ["forward", "Teruskan"]] },
         { name: "to", label: "Hanya untuk alamat (opsional)", placeholder: "info, sales@perusahaan.co.id" },
@@ -487,14 +555,14 @@ pages.inbox = async () => {
       })),
       card("Aturan aktif", table([
         { label: "Nama", key: "name" }, { label: "Aksi", render: (r) => r.action.type === "forward" ? "Teruskan → " + r.action.forward_to.join(", ") + (r.action.round_robin ? " (bergiliran)" : "") : "Balas otomatis" },
-        { label: "", render: (r) => h("button", { class: "sm danger", onclick: (e) => run(e.target, async () => { await api("DELETE", "/v1/inbound/rules/" + r.id); route(); }) }, "Hapus") },
+        { label: "", render: (r) => isAdmin() ? h("button", { class: "sm danger", onclick: (e) => run(e.target, async () => { await api("DELETE", "/v1/inbound/rules/" + r.id); route(); }) }, "Hapus") : "" },
       ], rules.data, "Belum ada aturan."))));
 };
 
 pages.aliases = async () => {
   const list = await api("GET", "/v1/aliases");
   return page("Alias email unik", "Alamat khusus per sales, divisi, atau kampanye di domain Anda.",
-    h("div", { class: "grid cols-2" },
+    !isAdmin() ? adminNote("membuat atau menghapus alias") : h("div", { class: "grid cols-2" },
       card("Buat satu alias", form([
         { name: "address", label: "Alamat", placeholder: "promo-nov@perusahaan.co.id", required: true, full: true },
         { name: "display_name", label: "Nama tampilan" }, { name: "forward_to", label: "Teruskan ke (opsional)" },
@@ -510,7 +578,7 @@ pages.aliases = async () => {
     card("Semua alias", table([
       { label: "Alamat", key: "address" }, { label: "Nama", key: "display_name" },
       { label: "Diteruskan ke", render: (r) => r.forward_to.join(", ") || "—" },
-      { label: "", render: (r) => h("button", { class: "sm danger", onclick: (e) => run(e.target, async () => { await api("DELETE", "/v1/aliases/" + r.id); route(); }) }, "Hapus") },
+      { label: "", render: (r) => isAdmin() ? h("button", { class: "sm danger", onclick: (e) => run(e.target, async () => { await api("DELETE", "/v1/aliases/" + r.id); route(); }) }, "Hapus") : "" },
     ], list.data, "Belum ada alias. Domain harus terverifikasi dulu.")));
 };
 
@@ -554,6 +622,7 @@ pages.sms = async () => {
 let flash = null;
 
 pages.settings = async () => {
+  if (!isAdmin()) return page("Pengaturan", "API key, webhook, dan daftar blokir.", adminNote("mengelola API key, webhook, dan daftar blokir"));
   const [keys, hooks, supp] = await Promise.all([api("GET", "/v1/api-keys"), api("GET", "/v1/webhooks"), api("GET", "/v1/suppressions")]);
   const secretBox = h("div");
   if (flash) {
@@ -592,6 +661,116 @@ pages.settings = async () => {
     ], supp.data, "Daftar blokir kosong.")));
 };
 
+// ---------- team (tenant admin) ----------
+pages.team = async () => {
+  const team = await api("GET", "/v1/team");
+  const roleSelect = (u) => {
+    const sel = h("select", { style: "width:auto;padding:4px 8px", disabled: !isAdmin() || u.id === me.user.id },
+      h("option", { value: "admin" }, "Admin"), h("option", { value: "user" }, "User"));
+    sel.value = u.role;
+    sel.addEventListener("change", () => run(sel, async () => { await api("PATCH", "/v1/team/" + u.id, { role: sel.value }); toast("Role diperbarui"); route(); }));
+    return sel;
+  };
+  return page("Tim", "Anggota workspace dan hak aksesnya. Admin mengelola domain, API key, webhook, alias, aturan, dan anggota tim; User menjalankan prospek, kampanye, sequence, dan inbox.",
+    h("div", { class: "grid " + (isAdmin() ? "span-2-1" : "cols-2") },
+      card("Anggota", table([
+        { label: "Nama", render: (u) => [u.full_name, u.id === me.user.id ? h("span", { class: "help" }, " (Anda)") : null, h("div", { class: "help" }, u.email)] },
+        { label: "Role", render: roleSelect },
+        { label: "Status", render: (u) => u.disabled ? h("span", { class: "badge bad" }, "nonaktif") : h("span", { class: "badge ok" }, "aktif") },
+        { label: "Login terakhir", render: (u) => fmtDate(u.last_login_at) },
+        { label: "", render: (u) => !isAdmin() || u.id === me.user.id ? "" : h("button", { class: "sm " + (u.disabled ? "" : "danger"), onclick: (e) =>
+          run(e.target, async () => { await api("PATCH", "/v1/team/" + u.id, { disabled: !u.disabled }); toast(u.disabled ? "Akun diaktifkan" : "Akun dinonaktifkan"); route(); }) },
+          u.disabled ? "Aktifkan" : "Nonaktifkan") },
+      ], team.data)),
+      isAdmin() ? card("Tambah anggota", form([
+        { name: "full_name", label: "Nama lengkap", required: true, full: true },
+        { name: "email", label: "Email bisnis", type: "email", required: true, full: true },
+        { name: "role", label: "Role", type: "select", options: [["user", "User"], ["admin", "Admin"]], full: true },
+        { name: "password", label: "Password awal (min. 10 karakter)", type: "password", required: true, full: true, help: "Bagikan ke anggota secara aman; mereka dapat menggantinya nanti." },
+      ], "Tambah anggota", async (v) => { await api("POST", "/v1/team", v); toast("Anggota ditambahkan"); route(); }))
+        : card("Peran Anda", h("p", {}, "Anda masuk sebagai ", h("b", {}, "User"), ". Untuk menambah anggota atau mengubah peran, hubungi admin workspace."))));
+};
+
+// ---------- platform console (super admin) ----------
+const PLANS = [["starter", "Starter"], ["growth", "Growth"], ["business", "Business"], ["enterprise", "Enterprise"]];
+let platformDays = 30;
+
+pages.platform = async () => {
+  if (!isSuper()) return page("Konsol platform", "", h("div", { class: "callout warn" }, "Halaman ini khusus super admin platform."));
+  const o = await api("GET", "/v1/admin/overview?days=" + platformDays);
+  const range = h("div", { class: "seg" }, [7, 30, 90].map((d) =>
+    h("button", { type: "button", class: d === platformDays ? "on" : "", onclick: () => { platformDays = d; route(); } }, d + " hari")));
+  const tile = (icon, chip, label, value, hint) => statTile({ icon, chip, label, value, hint });
+  return [
+    h("div", { class: "hero" },
+      h("div", { class: "row spread" }, h("div", {}, h("h1", {}, "Konsol platform"),
+        h("p", {}, `${Charts.full(o.tenants)} tenant · ${Charts.full(o.users)} pengguna · ${Charts.full(o.sent)} email terkirim dalam ${o.days} hari.`)), rolePill()),
+      h("div", { class: "actions" }, h("button", { class: "btn-light", onclick: () => { location.hash = "#/tenants"; } }, "Kelola tenant"))),
+    h("div", { class: "grid cols-4" },
+      tile("🏢", "c1", "Tenant aktif", `${Charts.full(o.active)} / ${Charts.full(o.tenants)}`, `${Charts.full(o.suspended)} ditangguhkan`),
+      tile("👥", "c3", "Pengguna", Charts.full(o.users), "di semua tenant"),
+      tile("✉️", "c2", "Email terkirim", Charts.full(o.sent), `${o.days} hari terakhir`),
+      tile("🛡️", "c4", "Bounce · laporan spam", o.sent ? (o.bounced / o.sent * 100).toFixed(1) + "%" : "0%", `${Charts.full(o.complaints)} laporan spam`)),
+    h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", {}, "Email terkirim per hari (semua tenant)"), range),
+      Charts.columns({ labels: o.series.map((d) => d.date), values: o.series.map((d) => d.sent), name: "Email terkirim", color: "--s1" })),
+    h("div", { class: "grid cols-2" },
+      card("Tenant baru per hari", Charts.columns({ labels: o.series.map((d) => d.date), values: o.series.map((d) => d.signups), name: "Tenant baru", color: "--s4", height: 180 })),
+      card("Tenant per paket", Charts.hbars({ items: (o.by_plan || []).map((b) => ({ label: (PLANS.find((p) => p[0] === b.plan) || [0, b.plan])[1], value: b.count })), color: "--s1" }))),
+    card("Tenant paling aktif (30 hari)", tenantTable(o.top_tenants, false)),
+  ];
+};
+
+function tenantTable(rows, editable) {
+  return table([
+    { label: "Tenant", render: (t) => [h("b", {}, t.name), h("div", { class: "help" }, t.admin_email || "—")] },
+    { label: "Paket", render: (t) => {
+      if (!editable) return badge(t.plan);
+      const sel = h("select", { style: "width:auto;padding:4px 8px" }, PLANS.map(([v, l]) => h("option", { value: v }, l)));
+      sel.value = t.plan;
+      sel.addEventListener("change", () => run(sel, async () => { await api("PATCH", "/v1/admin/tenants/" + t.id, { plan: sel.value }); toast("Paket diperbarui"); }));
+      return sel;
+    } },
+    { label: "Status", render: (t) => t.status === "active" ? h("span", { class: "badge ok" }, "aktif") : h("span", { class: "badge bad" }, "ditangguhkan") },
+    { label: "Pengguna", render: (t) => Charts.full(t.users) },
+    { label: "Kontak", render: (t) => Charts.full(t.contacts) },
+    { label: "Terkirim 30h", render: (t) => Charts.full(t.sent_30d) },
+    { label: "Bounce", render: (t) => t.sent_30d ? (t.bounced_30d / t.sent_30d * 100).toFixed(1) + "%" : "—" },
+    { label: "Kuota/hari", render: (t) => Charts.full(t.daily_send_limit) },
+    { label: "Kredit SMS", render: (t) => Charts.full(t.sms_credits) },
+    ...(editable ? [{ label: "", render: (t) => h("div", { style: "display:grid;grid-template-columns:auto auto;gap:6px;justify-content:start" },
+      h("button", { class: "sm", onclick: (e) => {
+        const v = prompt(`Kuota kirim harian baru untuk ${t.name}:`, t.daily_send_limit);
+        if (v == null) return;
+        run(e.target, async () => { await api("PATCH", "/v1/admin/tenants/" + t.id, { daily_send_limit: Number(v) }); toast("Kuota diperbarui"); route(); });
+      } }, "Kuota"),
+      h("button", { class: "sm", onclick: (e) => {
+        const v = prompt(`Tambah kredit SMS untuk ${t.name} (angka negatif untuk mengurangi):`, "100");
+        if (v == null) return;
+        run(e.target, async () => { await api("PATCH", "/v1/admin/tenants/" + t.id, { add_sms_credits: Number(v) }); toast("Kredit SMS diperbarui"); route(); });
+      } }, "+ SMS"),
+      h("button", { class: "sm " + (t.status === "active" ? "danger" : ""), style: "grid-column:1 / -1", onclick: (e) => {
+        const next = t.status === "active" ? "suspended" : "active";
+        if (next === "suspended" && !confirm(`Tangguhkan ${t.name}? Semua pengguna tenant ini tidak bisa masuk dan pengiriman berhenti.`)) return;
+        run(e.target, async () => { await api("PATCH", "/v1/admin/tenants/" + t.id, { status: next }); toast(next === "active" ? "Tenant diaktifkan" : "Tenant ditangguhkan"); route(); });
+      } }, t.status === "active" ? "Tangguhkan" : "Aktifkan")) }] : []),
+  ], rows, "Belum ada tenant.");
+}
+
+pages.tenants = async () => {
+  if (!isSuper()) return page("Tenant", "", h("div", { class: "callout warn" }, "Halaman ini khusus super admin platform."));
+  const q = new URLSearchParams(location.hash.split("?")[1] || "");
+  const list = await api("GET", `/v1/admin/tenants?limit=100&q=${encodeURIComponent(q.get("q") || "")}&status=${encodeURIComponent(q.get("status") || "")}`);
+  const search = h("form", { class: "row", style: "flex-wrap:nowrap" },
+    h("input", { name: "q", placeholder: "Cari nama tenant / email", value: q.get("q") || "", style: "width:240px" }),
+    h("select", { name: "status", style: "width:150px" }, h("option", { value: "" }, "Semua status"), h("option", { value: "active" }, "Aktif"), h("option", { value: "suspended" }, "Ditangguhkan")),
+    h("button", { type: "submit" }, "Cari"));
+  search.querySelector("select").value = q.get("status") || "";
+  search.addEventListener("submit", (e) => { e.preventDefault(); location.hash = "#/tenants?" + new URLSearchParams(new FormData(search)); });
+  return page("Tenant", "Semua workspace di platform: paket, kuota kirim, kredit SMS, dan status.",
+    h("div", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, `${list.data.length} tenant`), search), tenantTable(list.data, true)));
+};
+
 const brand = () => h("div", { class: "brand" },
   h("img", { class: "logo", src: "/static/brand/logo-mark.svg", alt: "", width: 30, height: 30 }),
   h("span", {}, "Balas", h("span", { class: "accent" }, "Email")));
@@ -600,11 +779,13 @@ const brand = () => h("div", { class: "brand" },
 function authScreen() {
   let mode = "login";
   const body = h("div");
+  const title = h("h1");
   const draw = () => {
+    title.textContent = mode === "login" ? "Masuk ke workspace" : "Buat workspace baru";
     body.replaceChildren(
       h("div", { class: "tabs" },
         h("button", { class: mode === "login" ? "on" : "", onclick: () => { mode = "login"; draw(); } }, "Masuk"),
-        h("button", { class: mode === "register" ? "on" : "", onclick: () => { mode = "register"; draw(); } }, "Daftar")),
+        h("button", { class: mode === "register" ? "on" : "", onclick: () => { mode = "register"; draw(); } }, "Daftar Gratis")),
       mode === "login"
         ? form([{ name: "email", label: "Email bisnis", type: "email", required: true }, { name: "password", label: "Password", type: "password", required: true }],
           "Masuk", async (v) => { const s = await api("POST", "/v1/auth/login", v); store.token = s.token; route(); })
@@ -617,39 +798,70 @@ function authScreen() {
         ], "Buat akun", async (v) => { const s = await api("POST", "/v1/auth/register", v); store.token = s.token; toast("Akun dibuat"); route(); }));
   };
   draw();
-  return h("div", { class: "auth" }, h("div", { class: "card" },
-    brand(),
-    h("p", { class: "sub", style: "text-align:center;margin:0" }, "Outreach & otomasi email B2B"), body));
+  return h("div", { class: "auth" },
+    h("div", { class: "auth-art" },
+      brand(),
+      h("div", {},
+        h("h2", {}, "Balas lebih cepat, tutup deal lebih banyak."),
+        h("p", {}, "Platform outreach & otomasi email B2B: dari menemukan prospek sampai membalas otomatis, semua dari domain bisnis Anda sendiri."),
+        h("ul", {},
+          h("li", {}, "Kampanye massal & follow-up multi-layer yang berhenti otomatis saat prospek membalas"),
+          h("li", {}, "Validasi email, SPF/DKIM/DMARC, dan perlindungan reputasi pengirim"),
+          h("li", {}, "Inbox terpadu dengan klasifikasi balasan, OTP, dan SMS gateway"))),
+      h("div", { class: "foot" }, "© BalasEmail · Patuh UU PDP & standar anti-spam")),
+    h("div", { class: "auth-form" }, h("div", { class: "card" },
+      title,
+      h("p", { class: "sub", style: "margin:0" }, "Gunakan email perusahaan Anda."), body)));
 }
 
 // ---------- shell & router ----------
+// [key, label, icon, visibility]
 const nav = [
-  ["Utama", [["overview", "Ringkasan"]]],
-  ["Prospek", [["finder", "Cari email"], ["validate", "Validasi"], ["contacts", "Kontak"]]],
-  ["Kirim", [["campaigns", "Kampanye"], ["sequences", "Sequence"], ["otp", "OTP"], ["sms", "SMS"]]],
-  ["Terima", [["inbox", "Inbox & aturan"], ["aliases", "Alias"]]],
-  ["Akun", [["domains", "Domain"], ["settings", "Pengaturan"]]],
+  ["Utama", [["overview", "Ringkasan", "📊"]]],
+  ["Prospek", [["finder", "Cari email", "🔎"], ["validate", "Validasi", "✅"], ["contacts", "Kontak", "👥"]]],
+  ["Kirim", [["campaigns", "Kampanye", "📣"], ["sequences", "Sequence", "🔁"], ["otp", "OTP", "🔐"], ["sms", "SMS", "💬"]]],
+  ["Terima", [["inbox", "Inbox & aturan", "📥"], ["aliases", "Alias", "🏷️"]]],
+  ["Workspace", [["domains", "Domain", "🌐"], ["team", "Tim", "🧑‍🤝‍🧑"], ["settings", "Pengaturan", "⚙️", "admin"]]],
+  ["Platform", [["platform", "Konsol platform", "🛰️", "super"], ["tenants", "Tenant", "🏢", "super"]], "super"],
 ];
+const visible = (who) => !who || (who === "admin" && isAdmin()) || (who === "super" && isSuper());
+
+let routeSeq = 0;
 
 async function route() {
+  const seq = ++routeSeq; // only the latest navigation may render
   if (!store.token) { $app.replaceChildren(authScreen()); return; }
   const [name, id] = (location.hash.replace(/^#\/?/, "").split("?")[0] || "overview").split("/");
+  try {
+    if (!me || name === "overview" || name === "" || name === "team") me = await api("GET", "/v1/me"); // fresh role, quota & credits
+  } catch (e) {
+    if (store.token && seq === routeSeq) $app.replaceChildren(h("main", {}, card("Terjadi kesalahan", h("p", {}, e.message))));
+    return;
+  }
+  if (seq !== routeSeq) return;
   const current = pages[name] ? name : "overview";
   const main = h("main", {}, h("div", { class: "empty" }, "Memuat…"));
+  const initials = (me.user.full_name || me.user.email || "?").split(/\s+/).map((x) => x[0]).slice(0, 2).join("").toUpperCase();
   $app.replaceChildren(h("div", { class: "shell" },
     h("aside", { class: "side" },
       brand(),
-      h("nav", { class: "nav" }, nav.map(([group, items]) => [h("div", { class: "nav-group" }, group),
-        items.map(([key, label]) => h("a", { href: "#/" + key, class: key === current ? "active" : "" }, label))]),
-        h("div", { class: "nav-group" }, ""),
-        h("a", { href: "#", onclick: (e) => { e.preventDefault(); store.token = ""; me = null; route(); } }, "Keluar"))),
+      h("nav", { class: "nav" }, nav.filter(([, , who]) => visible(who)).map(([group, items]) => {
+        const shown = items.filter(([, , , who]) => visible(who));
+        return shown.length ? [h("div", { class: "nav-group" }, group),
+          shown.map(([key, label, icon]) => h("a", { href: "#/" + key, class: key === current ? "active" : "" }, h("span", { class: "ico" }, icon), label))] : [];
+      })),
+      h("div", { class: "side-foot" },
+        h("div", { class: "me-card" }, h("div", { class: "avatar" }, initials),
+          h("div", {}, h("div", { class: "name" }, me.user.full_name || me.user.email), h("div", { class: "org" }, `${me.workspace.name} · ${roleLabel()}`))),
+        h("a", { href: "#", onclick: (e) => { e.preventDefault(); store.token = ""; me = null; route(); } }, "↩ Keluar"))),
     main));
   try {
-    if (current === "overview") me = null; // refresh quota & credits
-    me = me || await api("GET", "/v1/me");
-    main.replaceChildren(...[await pages[current](id)].flat());
+    const content = [await pages[current](id)].flat();
+    if (seq !== routeSeq) return;
+    main.replaceChildren(...content);
+    Charts.mount(main);
   } catch (e) {
-    if (!store.token) return;
+    if (!store.token || seq !== routeSeq) return;
     main.replaceChildren(card("Terjadi kesalahan", h("p", {}, e.message)));
   }
 }
