@@ -1,0 +1,53 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - uses: golangci/golangci-lint-action@v8
+        with: { version: latest }
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: balasemail
+          POSTGRES_PASSWORD: balasemail
+          POSTGRES_DB: balasemail_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U balasemail" --health-interval 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - name: Unit tests
+        run: make test
+      - name: Integration tests + coverage gate
+        run: make cover
+      - uses: actions/upload-artifact@v4
+        with: { name: coverage, path: coverage.out }
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: make build
+      - run: docker build -t balasemail:ci .
