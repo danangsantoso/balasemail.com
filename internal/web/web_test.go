@@ -33,7 +33,7 @@ func TestDashboardRoutes(t *testing.T) {
 	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "unsafe") {
 		t.Errorf("CSP = %q", csp)
 	}
-	for _, asset := range []string{"/static/app.js", "/static/app.css"} {
+	for _, asset := range []string{"/static/app.js", "/static/app.css", "/static/brand/logo-mark.svg", "/static/brand/favicon.svg", "/favicon.ico"} {
 		if resp, _ := get(asset); resp.StatusCode != 200 {
 			t.Errorf("%s = %d", asset, resp.StatusCode)
 		}

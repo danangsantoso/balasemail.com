@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="internal/web/static/brand/logo-horizontal-dark.svg">
+    <img src="internal/web/static/brand/logo-horizontal.svg" alt="BalasEmail" width="360">
+  </picture>
+</p>
+
 # BalasEmail.com
 
 Platform email outreach & otomasi komunikasi B2B (Golang). Spesifikasi produk ada di [`docs/PRD.md`](docs/PRD.md); rencana kerja terukur ada di [`docs/ROADMAP.md`](docs/ROADMAP.md).
@@ -92,3 +99,16 @@ curl -s localhost:8080/v1/auth/register -d '{"company_name":"PT Maju","full_name
 | `make lint` | `go vet` + golangci-lint |
 
 CI (`.github/workflows/ci.yml`) menjalankan lint, test, integration test dengan gate cakupan, dan build image. KPI PRD dipetakan ke metrik Prometheus dan alert di `deploy/alerts.yml` (lihat ROADMAP §KPI).
+
+## Logo
+
+File logo ada di `internal/web/static/brand/`:
+
+| File | Kegunaan |
+|---|---|
+| `logo-mark.svg`, `logo-512.png`, `logo-192.png` | Ikon aplikasi (gelembung chat + amplop, titik hijau = ada balasan baru) |
+| `logo-horizontal.svg/.png`, `logo-horizontal-dark.svg/.png` | Logo dengan tulisan, untuk latar terang dan gelap |
+| `favicon.svg`, `logo-32.png`, `apple-touch-icon.png` | Ikon browser dan home screen |
+
+Warna utama: biru `#2563EB` → indigo `#4F46E5` → ungu `#7C3AED`, aksen hijau `#34D399`.
+

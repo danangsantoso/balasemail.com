@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1110 300" role="img" aria-label="BalasEmail">
+<title>BalasEmail</title>
+<g transform="translate(20 20) scale(0.5078125)">
+<defs>
+  <linearGradient id="hbg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2563EB"/><stop offset=".5" stop-color="#4F46E5"/><stop offset="1" stop-color="#7C3AED"/></linearGradient>
+  <linearGradient id="hshine" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff" stop-opacity=".18"/><stop offset=".45" stop-color="#fff" stop-opacity="0"/></linearGradient>
+  <linearGradient id="hchev" x1="160" y1="190" x2="352" y2="290" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2563EB"/><stop offset="1" stop-color="#6D28D9"/></linearGradient>
+</defs>
+<rect width="512" height="512" rx="116" fill="url(#hbg)"/>
+<rect width="512" height="512" rx="116" fill="url(#hshine)"/>
+<path d="M150 140h212a56 56 0 0 1 56 56v124a56 56 0 0 1-56 56H244l-78 62v-62h-16a56 56 0 0 1-56-56V196a56 56 0 0 1 56-56z" fill="#fff"/>
+<path d="M168 214l88 62 88-62" fill="none" stroke="url(#hchev)" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="392" cy="138" r="54" fill="url(#hbg)"/>
+<circle cx="392" cy="138" r="34" fill="#34D399"/>
+</g>
+<text x="318" y="196" font-family="Inter, 'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="150" font-weight="800" letter-spacing="-4" fill="#121829">Balas<tspan fill="#4F46E5">Email</tspan></text>
+</svg>

@@ -46,6 +46,9 @@ func Routes(mux *http.ServeMux) {
 	assets := http.StripPrefix("/static/", http.FileServer(http.FS(static)))
 	mux.Handle("GET /static/", secure(assets))
 	mux.Handle("GET /static/contoh/", secure(download(assets)))
+	mux.Handle("GET /favicon.ico", secure(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, static, "brand/logo-32.png")
+	})))
 	mux.Handle("GET /{$}", secure(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFileFS(w, r, static, "index.html")

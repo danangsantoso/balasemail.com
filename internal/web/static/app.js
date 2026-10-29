@@ -592,6 +592,10 @@ pages.settings = async () => {
     ], supp.data, "Daftar blokir kosong.")));
 };
 
+const brand = () => h("div", { class: "brand" },
+  h("img", { class: "logo", src: "/static/brand/logo-mark.svg", alt: "", width: 30, height: 30 }),
+  h("span", {}, "Balas", h("span", { class: "accent" }, "Email")));
+
 // ---------- auth screen ----------
 function authScreen() {
   let mode = "login";
@@ -614,7 +618,7 @@ function authScreen() {
   };
   draw();
   return h("div", { class: "auth" }, h("div", { class: "card" },
-    h("div", { class: "brand" }, h("div", { class: "logo" }, "✉"), "BalasEmail"),
+    brand(),
     h("p", { class: "sub", style: "text-align:center;margin:0" }, "Outreach & otomasi email B2B"), body));
 }
 
@@ -634,7 +638,7 @@ async function route() {
   const main = h("main", {}, h("div", { class: "empty" }, "Memuat…"));
   $app.replaceChildren(h("div", { class: "shell" },
     h("aside", { class: "side" },
-      h("div", { class: "brand" }, h("div", { class: "logo" }, "✉"), "BalasEmail"),
+      brand(),
       h("nav", { class: "nav" }, nav.map(([group, items]) => [h("div", { class: "nav-group" }, group),
         items.map(([key, label]) => h("a", { href: "#/" + key, class: key === current ? "active" : "" }, label))]),
         h("div", { class: "nav-group" }, ""),
