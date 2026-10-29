@@ -27,6 +27,23 @@ var (
 		Namespace: ns, Name: "emails_sent_total", Help: "Outbound email attempts by category, provider and status.",
 	}, []string{"category", "provider", "status"})
 
+	// Bounces counts hard/soft bounces and complaints by source (sync = rejected at SMTP time, async = DSN/ARF).
+	Bounces = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: ns, Name: "bounces_total", Help: "Bounces and complaints by kind and source.",
+	}, []string{"kind", "source"})
+
+	Throttled = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: ns, Name: "throttled_total", Help: "Sends postponed by the shared per-domain limiter.",
+	}, []string{"scope"})
+
+	WebhookDeliveries = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: ns, Name: "webhook_deliveries_total", Help: "Customer webhook deliveries by outcome.",
+	}, []string{"outcome"})
+
+	DomainChecks = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: ns, Name: "domain_checks_total", Help: "Periodic sender-domain DNS checks by result.",
+	}, []string{"result"})
+
 	// EmailEvents counts engagement events: open|click|reply|unsubscribe|complaint.
 	EmailEvents = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: ns, Name: "email_events_total", Help: "Recipient engagement events.",

@@ -17,6 +17,7 @@ Platform email outreach & otomasi komunikasi B2B (Golang). Spesifikasi produk ad
 | F9 Auto-reply | `internal/inbound` | Rule engine, klasifikasi balasan (ID/EN), anti-loop (RFC 3834) + batas 1x/24 jam per pengirim |
 | F10 Auto-forward | `internal/inbound` | Forward berbasis aturan/klasifikasi, round-robin antar sales, dikirim ulang dari domain sendiri agar lolos DMARC |
 | F11 SMS via SMTP | `internal/sms`, `internal/smtpgw` | `08xx@sms.<domain>` → SMS; normalisasi nomor Indonesia; hitung segmen GSM-7/UCS-2; Twilio/Zenziva + failover; sistem kredit |
+| M1 Deliverability | `internal/bounce`, `internal/webhook`, `internal/platform/ratelimit`, `internal/platform/netguard` | Return-path VERP, parser DSN (RFC 3464) & ARF (RFC 5965), webhook event bertanda tangan, limiter bersama lintas worker, klien HTTP anti-SSRF, cek DNS berkala |
 | §8 Kepatuhan | `internal/suppression`, `internal/delivery` | Suppression global/workspace, footer identitas pengirim wajib, hak hapus data, auto-suspend jika bounce >5% atau complaint >0,3% |
 
 ## Arsitektur singkat

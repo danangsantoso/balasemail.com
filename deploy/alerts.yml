@@ -3,10 +3,10 @@
 groups:
   - name: balasemail-kpi
     rules:
-      - alert: HardBounceRateHigh            # KPI: hard bounce < 2%
+      - alert: HardBounceRateHigh            # KPI: hard bounce < 2% (sync rejections + async DSN)
         expr: |
-          sum(rate(balasemail_emails_sent_total{status="bounced",category=~"marketing|sequence"}[1h]))
-            / clamp_min(sum(rate(balasemail_emails_sent_total{status=~"sent|bounced",category=~"marketing|sequence"}[1h])), 1e-9) > 0.02
+          sum(rate(balasemail_bounces_total{kind="hard"}[1h]))
+            / clamp_min(sum(rate(balasemail_emails_sent_total{status=~"sent|bounced"}[1h])), 1e-9) > 0.02
         for: 30m
         labels: { severity: warning }
         annotations: { summary: "Hard bounce rate above 2% (PRD KPI)" }
@@ -43,6 +43,19 @@ groups:
         expr: sum(increase(balasemail_jobs_processed_total{outcome="dead"}[15m])) > 10
         labels: { severity: warning }
         annotations: { summary: "Background jobs are failing permanently" }
+
+      - alert: SenderDomainAuthFailing      # periodic DNS re-check found broken SPF/DKIM
+        expr: sum(increase(balasemail_domain_checks_total{result="failing"}[1h])) > 0
+        labels: { severity: warning }
+        annotations: { summary: "A verified sender domain lost SPF/DKIM; its sends are blocked" }
+
+      - alert: WebhookDeliveryFailing
+        expr: |
+          sum(rate(balasemail_webhook_deliveries_total{outcome=~"retry|rejected"}[30m]))
+            / clamp_min(sum(rate(balasemail_webhook_deliveries_total[30m])), 1e-9) > 0.2
+        for: 30m
+        labels: { severity: info }
+        annotations: { summary: "More than 20% of customer webhook calls fail" }
 
       - alert: SMSFailuresHigh
         expr: |

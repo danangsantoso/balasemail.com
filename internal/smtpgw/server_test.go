@@ -64,10 +64,25 @@ func (f *fakes) Receive(_ context.Context, rcpt string, _ []byte) error {
 	return nil
 }
 
+type fakeBounces struct {
+	mu   sync.Mutex
+	seen []string
+}
+
+func (b *fakeBounces) Accepts(rcpt string) bool { return strings.HasSuffix(rcpt, "@bounces.test") }
+func (b *fakeBounces) Process(_ context.Context, rcpt string, _ []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.seen = append(b.seen, rcpt)
+	return nil
+}
+
+var bounces = &fakeBounces{}
+
 func start(t *testing.T, inboundMode bool) (string, *fakes) {
 	t.Helper()
 	f := &fakes{}
-	g := New(Config{Hostname: "mx.test", SMSDomain: "sms.test", MaxMessageBytes: 1 << 20, AllowInsecureAuth: true}, f, f, f, f, f)
+	g := New(Config{Hostname: "mx.test", SMSDomain: "sms.test", MaxMessageBytes: 1 << 20, AllowInsecureAuth: true}, f, f, f, f, f, bounces)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -139,6 +154,17 @@ func TestInboundMX(t *testing.T) {
 	}
 	if len(f.smsBody) != 1 || f.smsBody[0] != "Pesanan dikirim" {
 		t.Errorf("sms = %v", f.smsBody)
+	}
+}
+
+func TestInboundBounceRouting(t *testing.T) {
+	addr, f := start(t, true)
+	dsn := "From: MAILER-DAEMON@acme.id\r\nSubject: Undelivered\r\n\r\n550 5.1.1 no such user\r\n"
+	if err := smtp.SendMail(addr, nil, "", []string{"b123@bounces.test"}, []byte(dsn)); err != nil {
+		t.Fatal(err)
+	}
+	if len(bounces.seen) == 0 || bounces.seen[len(bounces.seen)-1] != "b123@bounces.test" || len(f.inbound) != 0 {
+		t.Fatalf("bounce not routed: %v / inbound %v", bounces.seen, f.inbound)
 	}
 }
 

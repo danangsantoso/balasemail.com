@@ -1,5 +1,5 @@
 // Package delivery is the single outbound pipeline every module uses:
-// suppression check → persist → queue → throttle → DKIM sign → relay with
+// suppression check → persist → queue → shared throttle → DKIM sign → relay with
 // failover → bounce handling. It also serves open/click tracking and
 // one-click unsubscribe (PRD F6, F7, §8).
 package delivery
@@ -18,12 +18,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/danangsantoso/balasemail.com/internal/bounce"
 	"github.com/danangsantoso/balasemail.com/internal/emailaddr"
 	"github.com/danangsantoso/balasemail.com/internal/mailer"
 	"github.com/danangsantoso/balasemail.com/internal/platform/apperr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/database"
 	"github.com/danangsantoso/balasemail.com/internal/platform/metrics"
 	"github.com/danangsantoso/balasemail.com/internal/platform/queue"
+	"github.com/danangsantoso/balasemail.com/internal/platform/ratelimit"
 	"github.com/danangsantoso/balasemail.com/internal/platform/security"
 	"github.com/danangsantoso/balasemail.com/internal/suppression"
 )
@@ -90,22 +92,38 @@ type DomainKeys interface {
 }
 
 type Service struct {
-	db       *pgxpool.Pool
-	q        *queue.Queue
-	supp     *suppression.Service
-	keys     DomainKeys
-	router   *mailer.Router
-	throttle *mailer.DomainThrottle
-	signer   *security.Signer
-	baseURL  string
+	db      *pgxpool.Pool
+	q       *queue.Queue
+	supp    *suppression.Service
+	keys    DomainKeys
+	router  *mailer.Router
+	limiter ratelimit.Limiter
+	limits  DomainLimits
+	verp    bounce.VERP
+	signer  *security.Signer
+	baseURL string
 
 	mu    sync.RWMutex
 	hooks []func(context.Context, Event)
 }
 
-func NewService(db *pgxpool.Pool, q *queue.Queue, supp *suppression.Service, keys DomainKeys,
-	router *mailer.Router, throttle *mailer.DomainThrottle, signer *security.Signer, baseURL string) *Service {
-	return &Service{db: db, q: q, supp: supp, keys: keys, router: router, throttle: throttle, signer: signer, baseURL: baseURL}
+// DomainLimits caps sends per recipient domain per minute across all workers.
+type DomainLimits struct {
+	Default   int
+	Overrides map[string]int
+}
+
+func (d DomainLimits) For(domain string) int {
+	if n, ok := d.Overrides[domain]; ok {
+		return n
+	}
+	return d.Default
+}
+
+func NewService(db *pgxpool.Pool, q *queue.Queue, supp *suppression.Service, keys DomainKeys, router *mailer.Router,
+	limiter ratelimit.Limiter, limits DomainLimits, verp bounce.VERP, signer *security.Signer, baseURL string) *Service {
+	return &Service{db: db, q: q, supp: supp, keys: keys, router: router, limiter: limiter, limits: limits,
+		verp: verp, signer: signer, baseURL: baseURL}
 }
 
 // OnEvent registers a hook (e.g. the sequence engine stopping on reply).
@@ -315,10 +333,18 @@ func (s *Service) HandleSend(ctx context.Context, job queue.Job) error {
 	}
 
 	toDomain := m.To[strings.LastIndexByte(m.To, '@')+1:]
-	if err := s.throttle.Wait(ctx, toDomain); err != nil {
-		return err
+	if Category(m.Category) != CategoryOTP {
+		ok, retryIn, err := s.limiter.Allow(ctx, "rcpt-domain:"+toDomain, s.limits.For(toDomain), time.Minute)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			metrics.Throttled.WithLabelValues("recipient_domain").Inc()
+			return queue.RetryAfter(retryIn + time.Second)
+		}
 	}
-	provider, err := s.router.Send(ctx, mailer.Envelope{From: m.From, To: []string{m.To}}, raw)
+	// VERP return-path: asynchronous bounces come back to us, tagged with the message id.
+	provider, err := s.router.Send(ctx, mailer.Envelope{From: s.verp.Address(m.ID), To: []string{m.To}}, raw)
 	switch {
 	case err == nil:
 		metrics.EmailsSent.WithLabelValues(m.Category, provider, "sent").Inc()
@@ -332,7 +358,8 @@ func (s *Service) HandleSend(ctx context.Context, job queue.Job) error {
 		return nil
 	case mailer.IsHardBounce(err):
 		metrics.EmailsSent.WithLabelValues(m.Category, provider, "bounced").Inc()
-		if _, dbErr := s.db.Exec(ctx, `UPDATE messages SET status='bounced', provider=$2, bounced_at=now(), error=$3 WHERE id=$1`,
+		metrics.Bounces.WithLabelValues("hard", "sync").Inc()
+		if _, dbErr := s.db.Exec(ctx, `UPDATE messages SET status='bounced', provider=$2, bounced_at=now(), error=$3, bounce_reason=$3 WHERE id=$1`,
 			m.ID, provider, err.Error()); dbErr != nil {
 			return dbErr
 		}
@@ -424,6 +451,55 @@ func (s *Service) Unsubscribe(ctx context.Context, msgID string) error {
 		return err
 	}
 	return s.markOnce(ctx, msgID, "unsubscribed_at", "unsubscribe")
+}
+
+type msgRef struct{ ws, to, enrollment, contact string }
+
+func (s *Service) ref(ctx context.Context, q string, args ...any) (msgRef, bool, error) {
+	var r msgRef
+	err := s.db.QueryRow(ctx, q, args...).Scan(&r.ws, &r.to, &r.enrollment, &r.contact)
+	if database.IsNoRows(err) {
+		return r, false, nil
+	}
+	return r, err == nil, err
+}
+
+const refCols = `workspace_id, to_email, coalesce(enrollment_id::text,''), coalesce(contact_id::text,'')`
+
+// RecordBounce applies an asynchronous DSN. Hard bounces suppress the address
+// and stop sequences; soft bounces are only recorded.
+func (s *Service) RecordBounce(ctx context.Context, msgID string, hard bool, reason string) error {
+	if !hard {
+		r, ok, err := s.ref(ctx, `SELECT `+refCols+` FROM messages WHERE id=$1`, msgID)
+		if ok {
+			s.emit(ctx, Event{Type: "soft_bounce", MessageID: msgID, WorkspaceID: r.ws, EnrollmentID: r.enrollment, ContactID: r.contact})
+		}
+		return err
+	}
+	r, ok, err := s.ref(ctx, `UPDATE messages SET status='bounced', bounced_at=now(), bounce_reason=$2
+		WHERE id=$1 AND bounced_at IS NULL RETURNING `+refCols, msgID, reason)
+	if !ok {
+		return err // unknown or already recorded
+	}
+	if err := s.supp.Add(ctx, r.ws, r.to, suppression.ReasonHardBounce); err != nil {
+		return err
+	}
+	s.emit(ctx, Event{Type: "bounce", MessageID: msgID, WorkspaceID: r.ws, EnrollmentID: r.enrollment, ContactID: r.contact})
+	return nil
+}
+
+// RecordComplaint applies a feedback-loop spam report: permanent suppression.
+func (s *Service) RecordComplaint(ctx context.Context, msgID, feedbackType string) error {
+	r, ok, err := s.ref(ctx, `UPDATE messages SET complained_at=now() WHERE id=$1 AND complained_at IS NULL RETURNING `+refCols, msgID)
+	if !ok {
+		return err
+	}
+	if err := s.supp.Add(ctx, r.ws, r.to, suppression.ReasonComplaint); err != nil {
+		return err
+	}
+	slog.Info("spam complaint recorded", "message_id", msgID, "feedback_type", feedbackType)
+	s.emit(ctx, Event{Type: "complaint", MessageID: msgID, WorkspaceID: r.ws, EnrollmentID: r.enrollment, ContactID: r.contact})
+	return nil
 }
 
 // FindByMessageIDHeader maps an In-Reply-To/References value to our message id.

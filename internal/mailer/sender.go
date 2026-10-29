@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-
-	"golang.org/x/time/rate"
 )
 
 // Envelope is the SMTP envelope (MAIL FROM / RCPT TO).
@@ -249,32 +247,4 @@ func (r *Router) record(name string, ok bool) {
 		c.openUntil = time.Now().Add(r.cooldown)
 		c.failures = 0
 	}
-}
-
-// DomainThrottle limits sends per recipient domain to protect reputation
-// (e.g. bursts to gmail.com). Per process; size worker pools accordingly.
-type DomainThrottle struct {
-	mu        sync.Mutex
-	perMinute map[string]int
-	def       int
-	limiters  map[string]*rate.Limiter
-}
-
-func NewDomainThrottle(defaultPerMinute int, overrides map[string]int) *DomainThrottle {
-	return &DomainThrottle{perMinute: overrides, def: defaultPerMinute, limiters: map[string]*rate.Limiter{}}
-}
-
-func (t *DomainThrottle) Wait(ctx context.Context, domain string) error {
-	t.mu.Lock()
-	l, ok := t.limiters[domain]
-	if !ok {
-		n := t.def
-		if v, ok := t.perMinute[domain]; ok {
-			n = v
-		}
-		l = rate.NewLimiter(rate.Limit(float64(n)/60), max(n/10, 1))
-		t.limiters[domain] = l
-	}
-	t.mu.Unlock()
-	return l.Wait(ctx)
 }

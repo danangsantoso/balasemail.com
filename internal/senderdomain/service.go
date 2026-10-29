@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/danangsantoso/balasemail.com/internal/emailaddr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/apperr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/database"
+	"github.com/danangsantoso/balasemail.com/internal/platform/metrics"
 	"github.com/danangsantoso/balasemail.com/internal/platform/security"
 )
 
@@ -148,7 +150,8 @@ func (s *Service) Check(ctx context.Context, wsID, id string) (Domain, error) {
 	for _, r := range d.Records {
 		switch r.Purpose {
 		case "verification":
-			d.Verified = r.OK
+			// Ownership is sticky: customers often delete the TXT record after verifying.
+			d.Verified = d.Verified || r.OK
 		case "spf":
 			d.SPFOK = r.OK
 		case "dkim":
@@ -167,6 +170,45 @@ func (s *Service) Check(ctx context.Context, wsID, id string) (Domain, error) {
 		return d, apperr.Internal(err)
 	}
 	return d, nil
+}
+
+// RecheckAll re-runs DNS checks for domains not checked in the last 6 hours,
+// so a broken SPF/DKIM record blocks sending before it hurts reputation.
+func (s *Service) RecheckAll(ctx context.Context) error {
+	rows, err := s.db.Query(ctx, `SELECT workspace_id, id, spf_ok AND dkim_ok FROM sender_domains
+		WHERE verified AND (last_checked_at IS NULL OR last_checked_at < now() - interval '6 hours')
+		ORDER BY last_checked_at NULLS FIRST LIMIT 200`)
+	if err != nil {
+		return err
+	}
+	type item struct {
+		ws, id string
+		wasOK  bool
+	}
+	items, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (item, error) {
+		var it item
+		return it, r.Scan(&it.ws, &it.id, &it.wasOK)
+	})
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		d, err := s.Check(ctx, it.ws, it.id)
+		if err != nil {
+			metrics.DomainChecks.WithLabelValues("error").Inc()
+			continue
+		}
+		if d.CanSend() {
+			metrics.DomainChecks.WithLabelValues("ok").Inc()
+			continue
+		}
+		metrics.DomainChecks.WithLabelValues("failing").Inc()
+		if it.wasOK {
+			slog.Warn("sender domain lost authentication; sending is blocked until fixed",
+				"domain", d.Name, "workspace_id", it.ws, "spf_ok", d.SPFOK, "dkim_ok", d.DKIMOK)
+		}
+	}
+	return nil
 }
 
 // ExpectedRecords lists what the customer must publish.

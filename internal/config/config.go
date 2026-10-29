@@ -22,6 +22,9 @@ type Config struct {
 	SigningSecret string // HMAC for unsubscribe/tracking/OTP hashes
 	EncryptionKey string // AES-GCM for DKIM keys & secrets at rest
 
+	// AllowPrivateNetworks lets webhooks/crawler reach private IPs (development only).
+	AllowPrivateNetworks bool
+
 	SPFInclude   string // e.g. "_spf.balasemail.com"
 	DKIMSelector string
 
@@ -37,6 +40,7 @@ type SMTPConfig struct {
 	SubmissionAddr  string // authenticated relay (587)
 	InboundAddr     string // MX for replies, aliases and SMS bridge (25)
 	SMSDomain       string // e.g. sms.balasemail.com
+	BounceDomain    string // VERP return-path domain, MX must point at smtpd (e.g. bounces.balasemail.com)
 	TLSCertFile     string
 	TLSKeyFile      string
 	MaxMessageBytes int64
@@ -95,6 +99,7 @@ func Load() (Config, error) {
 			SubmissionAddr:  env("SMTP_SUBMISSION_ADDR", ":2587"),
 			InboundAddr:     env("SMTP_INBOUND_ADDR", ":2525"),
 			SMSDomain:       strings.ToLower(env("SMS_DOMAIN", "sms.balasemail.local")),
+			BounceDomain:    strings.ToLower(env("BOUNCE_DOMAIN", "bounces.balasemail.local")),
 			TLSCertFile:     env("SMTP_TLS_CERT", ""),
 			TLSKeyFile:      env("SMTP_TLS_KEY", ""),
 			MaxMessageBytes: int64(envInt("SMTP_MAX_MESSAGE_BYTES", 25<<20)),
@@ -130,6 +135,7 @@ func Load() (Config, error) {
 		},
 	}
 
+	c.AllowPrivateNetworks = envBool("OUTBOUND_ALLOW_PRIVATE", c.Env == "development")
 	var errs []error
 	if c.Env == "development" {
 		// Convenience defaults for local runs only.

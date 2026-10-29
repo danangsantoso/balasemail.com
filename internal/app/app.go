@@ -15,6 +15,7 @@ import (
 
 	"github.com/danangsantoso/balasemail.com/internal/alias"
 	"github.com/danangsantoso/balasemail.com/internal/auth"
+	"github.com/danangsantoso/balasemail.com/internal/bounce"
 	"github.com/danangsantoso/balasemail.com/internal/campaign"
 	"github.com/danangsantoso/balasemail.com/internal/config"
 	"github.com/danangsantoso/balasemail.com/internal/contact"
@@ -26,7 +27,9 @@ import (
 	"github.com/danangsantoso/balasemail.com/internal/platform/database"
 	"github.com/danangsantoso/balasemail.com/internal/platform/httpx"
 	"github.com/danangsantoso/balasemail.com/internal/platform/metrics"
+	"github.com/danangsantoso/balasemail.com/internal/platform/netguard"
 	"github.com/danangsantoso/balasemail.com/internal/platform/queue"
+	"github.com/danangsantoso/balasemail.com/internal/platform/ratelimit"
 	"github.com/danangsantoso/balasemail.com/internal/platform/security"
 	"github.com/danangsantoso/balasemail.com/internal/senderdomain"
 	"github.com/danangsantoso/balasemail.com/internal/sequence"
@@ -34,6 +37,7 @@ import (
 	"github.com/danangsantoso/balasemail.com/internal/smtpgw"
 	"github.com/danangsantoso/balasemail.com/internal/suppression"
 	"github.com/danangsantoso/balasemail.com/internal/validator"
+	"github.com/danangsantoso/balasemail.com/internal/webhook"
 	"github.com/danangsantoso/balasemail.com/migrations"
 )
 
@@ -55,6 +59,9 @@ type App struct {
 	Inbound     *inbound.Service
 	OTP         *otp.Service
 	SMS         *sms.Service
+	Webhooks    *webhook.Service
+	Bounces     *bounce.Processor
+	Limiter     *ratelimit.Postgres
 }
 
 // New connects to the database, applies migrations and builds every module.
@@ -87,17 +94,25 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	a.Validator = validator.New(resolver, prober)
 	a.Contacts = contact.NewService(db, a.Suppression, q, a.Validator)
+	outbound := netguard.Client(10*time.Second, cfg.AllowPrivateNetworks)
 	a.Finder = finder.NewService(&finder.Crawler{
-		Client:    &http.Client{Timeout: 10 * time.Second},
+		Client:    outbound,
 		UserAgent: cfg.Finder.UserAgent, MaxPages: cfg.Finder.MaxPages, Delay: 500 * time.Millisecond,
 	}, a.Validator, a.Suppression, a.Contacts)
 
-	a.Delivery = delivery.NewService(db, q, a.Suppression, a.Domains, mailRouter(cfg), mailer.NewDomainThrottle(600, map[string]int{
-		"gmail.com": 300, "yahoo.com": 200, "outlook.com": 200, "hotmail.com": 200,
-	}), signer, cfg.PublicBaseURL)
+	a.Limiter = ratelimit.NewPostgres(db)
+	verp := bounce.VERP{Signer: signer, Domain: cfg.SMTP.BounceDomain}
+	a.Delivery = delivery.NewService(db, q, a.Suppression, a.Domains, mailRouter(cfg), a.Limiter, delivery.DomainLimits{
+		Default:   600,
+		Overrides: map[string]int{"gmail.com": 300, "googlemail.com": 300, "yahoo.com": 200, "outlook.com": 200, "hotmail.com": 200},
+	}, verp, signer, cfg.PublicBaseURL)
+	a.Bounces = &bounce.Processor{VERP: verp, Rec: a.Delivery}
+	a.Webhooks = webhook.NewService(db, q, cipher, outbound)
+	a.Webhooks.AllowHTTP = cfg.Env != "production"
+	a.Delivery.OnEvent(a.Webhooks.OnDeliveryEvent)
 	a.Campaigns = campaign.NewService(db, a.Delivery, a.Domains)
 	a.SMS = sms.NewService(db, q, smsRouter(cfg))
-	a.Sequences = sequence.NewService(db, a.Delivery, a.Domains, a.Contacts, a.SMS, q, signer)
+	a.Sequences = sequence.NewService(db, a.Delivery, a.Domains, a.Contacts, a.SMS, q, signer, outbound)
 	a.Aliases = alias.NewService(db, a.Domains)
 	a.Inbound = inbound.NewService(db, a.Delivery, a.Suppression, a.Aliases, a.Domains, inbound.KeywordClassifier{})
 	a.OTP = otp.NewService(db, a.Delivery, a.authorizeSender, a.SMS, q, signer, cipher)
@@ -171,6 +186,7 @@ func (a *App) HTTPHandler() http.Handler {
 	a.Inbound.Routes(mux, authed)
 	a.OTP.Routes(mux, authed)
 	a.SMS.Routes(mux, authed)
+	a.Webhooks.Routes(mux, authed)
 	a.Delivery.PublicRoutes(mux)
 
 	return httpx.Chain(mux, httpx.Recover, httpx.RequestID, httpx.Observe)
@@ -190,6 +206,7 @@ func (a *App) RegisterJobs(w *queue.Worker) {
 	w.Handle(sms.JobSend, a.SMS.HandleSend)
 	w.Handle(otp.JobFallback, a.OTP.HandleFallback)
 	w.Handle(sequence.JobWebhook, a.Sequences.HandleWebhook)
+	w.Handle(webhook.JobDeliver, a.Webhooks.HandleDeliver)
 }
 
 // Scheduler is a periodic task run by the worker.
@@ -204,6 +221,8 @@ func (a *App) Schedulers() []Scheduler {
 		{"sequence.tick", 30 * time.Second, a.Sequences.Tick},
 		{"campaign.complete", time.Minute, a.Campaigns.CompleteFinished},
 		{"reputation.enforce", 15 * time.Minute, a.Delivery.EnforceReputation},
+		{"domains.recheck", 30 * time.Minute, a.Domains.RecheckAll},
+		{"ratelimit.cleanup", 30 * time.Minute, a.Limiter.Cleanup},
 	}
 }
 
@@ -227,6 +246,14 @@ func (r relayAdapter) QueueRelay(ctx context.Context, wsID, from, to string, raw
 	return err
 }
 
+type bounceAdapter struct{ p *bounce.Processor }
+
+func (b bounceAdapter) Accepts(rcpt string) bool { return b.p.Accepts(rcpt) }
+func (b bounceAdapter) Process(ctx context.Context, rcpt string, raw []byte) error {
+	_, err := b.p.Process(ctx, rcpt, raw)
+	return err
+}
+
 // Gateway builds the SMTP gateway.
 func (a *App) Gateway() (*smtpgw.Gateway, error) {
 	var tlsCfg *tls.Config
@@ -243,5 +270,5 @@ func (a *App) Gateway() (*smtpgw.Gateway, error) {
 		MaxMessageBytes:   a.Cfg.SMTP.MaxMessageBytes,
 		TLS:               tlsCfg,
 		AllowInsecureAuth: a.Cfg.Env != "production",
-	}, a.Auth, senderAdapter{a}, relayAdapter{a}, a.SMS, a.Inbound), nil
+	}, a.Auth, senderAdapter{a}, relayAdapter{a}, a.SMS, a.Inbound, bounceAdapter{a.Bounces}), nil
 }

@@ -49,6 +49,17 @@ MX + header X-BalasEmail-Key: RCPT 08xx@sms.<domain> → sms.FromEmail
   → Router Twilio → Zenziva (failover); jika gagal permanen, kredit dikembalikan
 ```
 
+### Bounce asinkron & complaint (M1)
+```
+kirim: MAIL FROM = b<uuid-hex><hmac16>@BOUNCE_DOMAIN   (VERP; DKIM tetap memakai domain pelanggan → DMARC lolos)
+DSN/ARF → MX smtpd → bounce.Processor
+  → ID pesan diambil dari VERP (terverifikasi HMAC), atau dari Message-ID asli di laporan ARF
+  → delivery.RecordBounce / RecordComplaint → suppression + event → hook sequence (stop) + webhook pelanggan
+```
+
+### Rate limit bersama
+`ratelimit.Postgres` memakai counter fixed-window (`rate_buckets`, UPSERT atomik), jadi batas per domain penerima berlaku untuk semua worker sekaligus. Kalau batas tercapai, job dijadwalkan ulang dengan `queue.RetryAfter` tanpa menghabiskan jatah percobaan.
+
 ## Keamanan
 
 - Password memakai bcrypt. Sesi memakai JWT HS256 dengan issuer tetap. API key `bm_<prefix>_<secret>` hanya disimpan hash SHA-256-nya dan dibandingkan secara constant-time.
@@ -56,10 +67,12 @@ MX + header X-BalasEmail-Key: RCPT 08xx@sms.<domain> → sms.FromEmail
 - Token tracking/unsubscribe ditandatangani HMAC dengan prefix tujuan (`o:`, `c:`, `u:`) supaya token klik tidak bisa dipakai sebagai token unsubscribe. URL klik ikut ditandatangani, jadi tidak ada open redirect.
 - Unsubscribe lewat GET hanya menampilkan konfirmasi, karena link scanner sering mem-prefetch URL. Unsubscribe benar-benar terjadi lewat POST (RFC 8058).
 - SMTP: header `From` harus satu domain dengan `MAIL FROM` yang sudah diotorisasi, header `Bcc` dibuang, dan MX menolak penerima di luar domain pelanggan.
+- Request keluar yang URL-nya berasal dari pelanggan atau internet (webhook, crawler finder) memakai `netguard.Client`. Klien ini menolak IP privat, loopback, link-local, dan CGNAT saat connect, sehingga DNS rebinding tidak bisa melewatinya.
+- Secret webhook dienkripsi saat disimpan. Payload ditandatangani HMAC dengan timestamp untuk mencegah replay.
 - Rate limit per IP untuk endpoint publik auth. Rate limit per penerima untuk OTP.
 
 ## Batasan saat ini (lihat ROADMAP)
 
-- Throttle per domain dan rate limit IP masih per proses. Untuk banyak instance perlu limiter bersama (Redis).
-- Bounce asinkron (DSN yang datang belakangan) dan feedback loop complaint belum diparse. Yang sudah ditangani baru bounce sinkron dari relay.
+- Rate limit IP di API masih per proses. Throttle pengiriman sudah dibagi lewat PostgreSQL. Kalau volume sudah sangat tinggi, `ratelimit.Limiter` bisa diganti ke Redis.
+- Fixed window membolehkan burst di awal tiap menit. Sliding window/token bucket baru diperlukan kalau ISP mulai mengeluh.
 - Daftar disposable/free provider masih berupa seed kecil dan perlu job pembaruan berkala.

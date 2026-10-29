@@ -18,12 +18,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/danangsantoso/balasemail.com/internal/config"
 	"github.com/danangsantoso/balasemail.com/internal/platform/queue"
+	"github.com/danangsantoso/balasemail.com/internal/webhook"
 )
 
 type harness struct {
@@ -53,7 +56,7 @@ func setup(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.DB.Exec(ctx, `TRUNCATE workspaces, jobs CASCADE`); err != nil {
+	if _, err := a.DB.Exec(ctx, `TRUNCATE workspaces, jobs, suppressions, rate_buckets CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewUnstartedServer(a.HTTPHandler())
@@ -237,4 +240,112 @@ func TestSequenceStopsOnReply(t *testing.T) {
 	if got := h.scalar(`SELECT classification FROM inbound_emails`); got != "interested" {
 		t.Fatalf("classification = %s", got)
 	}
+}
+
+func TestAsyncBounceComplaintAndWebhooks(t *testing.T) {
+	h := setup(t)
+	h.onboard()
+
+	var mu sync.Mutex
+	var got []string
+	var secret string
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		defer mu.Unlock()
+		if !webhook.Verify(secret, r.Header.Get(webhook.SignatureHeader), body, time.Minute, time.Now()) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var p webhook.Payload
+		_ = json.Unmarshal(body, &p)
+		got = append(got, p.Type+":"+p.Data.To)
+	}))
+	defer hook.Close()
+	ep := h.do("POST", "/v1/webhooks", map[string]any{"url": hook.URL, "events": []string{"bounce", "complaint"}}, 201)
+	mu.Lock()
+	secret = ep["secret"].(string)
+	mu.Unlock()
+
+	for _, e := range []string{"andi@acme.id", "budi@yahoo.com"} {
+		h.do("POST", "/v1/contacts", map[string]any{"email": e, "tags": []string{"b2b"}}, 200)
+	}
+	c := h.do("POST", "/v1/campaigns", map[string]any{"name": "Q4", "from_email": "budi@maju.co.id",
+		"subject": "Halo", "text": "Penawaran", "tag_filter": []string{"b2b"}}, 201)
+	id := c["id"].(string)
+	h.do("POST", "/v1/campaigns/"+id+"/launch", nil, 202)
+	eventually(t, func() bool {
+		return h.scalar(`SELECT count(*)::text FROM messages WHERE campaign_id=$1 AND status='sent'`, id) == "2"
+	})
+
+	ctx := context.Background()
+	andi := h.scalar(`SELECT id FROM messages WHERE to_email='andi@acme.id'`)
+	dsn := "From: mailer-daemon@acme.id\r\nSubject: Delivery Status Notification (Failure)\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/report; report-type=delivery-status; boundary=\"X\"\r\n\r\n" +
+		"--X\r\nContent-Type: message/delivery-status\r\n\r\nReporting-MTA: dns; acme.id\r\n\r\n" +
+		"Final-Recipient: rfc822; andi@acme.id\r\nAction: failed\r\nStatus: 5.1.1\r\n--X--\r\n"
+	if _, err := h.a.Bounces.Process(ctx, h.a.Bounces.VERP.Address(andi), []byte(dsn)); err != nil {
+		t.Fatal(err)
+	}
+
+	hdr := h.scalar(`SELECT message_id_header FROM messages WHERE to_email='budi@yahoo.com'`)
+	arf := "From: feedback@yahoo.com\r\nMIME-Version: 1.0\r\nContent-Type: multipart/report; report-type=feedback-report; boundary=\"F\"\r\n\r\n" +
+		"--F\r\nContent-Type: message/feedback-report\r\n\r\nFeedback-Type: abuse\r\nVersion: 1\r\n" +
+		"--F\r\nContent-Type: message/rfc822\r\n\r\nMessage-ID: <" + hdr + ">\r\n\r\nx\r\n--F--\r\n"
+	if _, err := h.a.Bounces.Process(ctx, "fbl@"+h.a.Cfg.SMTP.BounceDomain, []byte(arf)); err != nil {
+		t.Fatal(err)
+	}
+
+	if r := h.scalar(`SELECT string_agg(value||'='||reason, ',' ORDER BY value) FROM suppressions`); r != "andi@acme.id=hard_bounce,budi@yahoo.com=complaint" {
+		t.Fatalf("suppressions = %s", r)
+	}
+	st := h.do("GET", "/v1/campaigns/"+id+"/stats", nil, 200)
+	if st["bounced"].(float64) != 1 {
+		t.Fatalf("stats = %v", st)
+	}
+	eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(got) == 2
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Contains(got, "bounce:andi@acme.id") || !slices.Contains(got, "complaint:budi@yahoo.com") {
+		t.Fatalf("webhooks = %v", got)
+	}
+}
+
+func TestSharedRateLimiter(t *testing.T) {
+	h := setup(t)
+	ctx := context.Background()
+	for i := range 3 {
+		ok, retry, err := h.a.Limiter.Allow(ctx, "rcpt-domain:test.id", 2, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := i < 2; ok != want || (!ok && retry <= 0) {
+			t.Fatalf("call %d: ok=%v retry=%v", i, ok, retry)
+		}
+	}
+}
+
+func TestQueueRetryAfterKeepsAttempts(t *testing.T) {
+	h := setup(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := make(chan int, 4)
+	w := queue.NewWorker(h.a.DB)
+	w.PollEvery = 50 * time.Millisecond
+	w.Handle("test.throttled", func(context.Context, queue.Job) error {
+		calls <- 1
+		return queue.RetryAfter(time.Hour)
+	})
+	go w.Run(ctx)
+	if err := h.a.Queue.Enqueue(ctx, "test.throttled", map[string]string{}, queue.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	<-calls
+	eventually(t, func() bool {
+		return h.scalar(`SELECT status||'/'||attempts||'/'||(run_at > now() + interval '50 minutes') FROM jobs WHERE kind='test.throttled'`) == "queued/0/true"
+	})
 }

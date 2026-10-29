@@ -48,6 +48,13 @@ func (p permanentError) Unwrap() error { return p.err }
 // Permanent marks err as non-retryable.
 func Permanent(err error) error { return permanentError{err} }
 
+type retryAfterError struct{ after time.Duration }
+
+func (r retryAfterError) Error() string { return "rescheduled after " + r.after.String() }
+
+// RetryAfter reschedules the job without consuming an attempt (e.g. rate limited).
+func RetryAfter(d time.Duration) error { return retryAfterError{after: d} }
+
 // Options for Enqueue.
 type Options struct {
 	Priority    int
@@ -177,6 +184,13 @@ func (w *Worker) execute(ctx context.Context, j Job) {
 	if err == nil {
 		metrics.JobsProcessed.WithLabelValues(j.Kind, "done").Inc()
 		_, _ = w.pool.Exec(sctx, `UPDATE jobs SET status='done', last_error=NULL, updated_at=now() WHERE id=$1`, j.ID)
+		return
+	}
+	var later retryAfterError
+	if errors.As(err, &later) {
+		metrics.JobsProcessed.WithLabelValues(j.Kind, "rescheduled").Inc()
+		_, _ = w.pool.Exec(sctx, `UPDATE jobs SET status='queued', attempts=greatest(attempts-1,0), run_at=now()+$2::interval,
+			locked_at=NULL, updated_at=now() WHERE id=$1`, j.ID, later.after.String())
 		return
 	}
 	var perm permanentError

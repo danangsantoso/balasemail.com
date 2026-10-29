@@ -44,6 +44,11 @@ type (
 		Accepts(ctx context.Context, rcpt string) bool
 		Receive(ctx context.Context, rcpt string, raw []byte) error
 	}
+	// Bounces handles DSN/ARF mail sent to VERP return-paths and FBL mailboxes.
+	Bounces interface {
+		Accepts(rcpt string) bool
+		Process(ctx context.Context, rcpt string, raw []byte) error
+	}
 )
 
 type Config struct {
@@ -61,10 +66,11 @@ type Gateway struct {
 	relay   Relay
 	sms     SMSBridge
 	inbound Inbound
+	bounces Bounces
 }
 
-func New(cfg Config, keys APIKeyAuth, senders SenderAuth, relay Relay, s SMSBridge, in Inbound) *Gateway {
-	return &Gateway{cfg: cfg, keys: keys, senders: senders, relay: relay, sms: s, inbound: in}
+func New(cfg Config, keys APIKeyAuth, senders SenderAuth, relay Relay, s SMSBridge, in Inbound, b Bounces) *Gateway {
+	return &Gateway{cfg: cfg, keys: keys, senders: senders, relay: relay, sms: s, inbound: in, bounces: b}
 }
 
 func (g *Gateway) newServer(addr string, be smtp.Backend) *smtp.Server {
@@ -263,9 +269,10 @@ func PrepareRelay(raw []byte, from string) []byte {
 // ---- inbound MX ----
 
 type inboundSession struct {
-	g        *Gateway
-	rcpts    []string
-	smsRcpts []string
+	g           *Gateway
+	rcpts       []string
+	smsRcpts    []string
+	bounceRcpts []string
 }
 
 func (s *inboundSession) Mail(string, *smtp.MailOptions) error { return nil }
@@ -280,6 +287,10 @@ func (s *inboundSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 			return errBadAddress
 		}
 		s.smsRcpts = append(s.smsRcpts, addr)
+		return nil
+	}
+	if s.g.bounces.Accepts(addr) {
+		s.bounceRcpts = append(s.bounceRcpts, addr)
 		return nil
 	}
 	ctx, cancel := opCtx()
@@ -317,6 +328,11 @@ func (s *inboundSession) Data(r io.Reader) error {
 		}
 	}
 	var errs []error
+	for _, rc := range s.bounceRcpts {
+		if err := s.g.bounces.Process(ctx, rc, raw); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	for _, rc := range s.rcpts {
 		if err := s.g.inbound.Receive(ctx, rc, raw); err != nil {
 			errs = append(errs, err)
@@ -329,5 +345,5 @@ func (s *inboundSession) Data(r io.Reader) error {
 	return nil
 }
 
-func (s *inboundSession) Reset()        { s.rcpts, s.smsRcpts = nil, nil }
+func (s *inboundSession) Reset()        { s.rcpts, s.smsRcpts, s.bounceRcpts = nil, nil, nil }
 func (s *inboundSession) Logout() error { return nil }

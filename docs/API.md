@@ -32,6 +32,7 @@ Semua endpoint `/v1/*`, kecuali register/login, membutuhkan `Authorization: Bear
 | `GET/POST /v1/inbound/rules`, `PUT/DELETE /v1/inbound/rules/{id}` | F9/F10 | |
 | `POST /v1/otp/send`, `POST /v1/otp/verify` | F4 | |
 | `POST /v1/sms`, `GET /v1/sms` | F11 | |
+| `GET/POST /v1/webhooks`, `DELETE /v1/webhooks/{id}` | F6 | `{url, events}`; secret ditampilkan sekali |
 | `GET /t/o/{token}`, `GET /t/c/{token}` | F7 | Tracking (publik) |
 | `GET/POST /u/{token}` | §8 | Unsubscribe 1-klik (publik) |
 | `GET /healthz`, `GET /readyz` | | Probe |
@@ -73,6 +74,27 @@ curl -s -H "Authorization: Bearer $KEY" localhost:8080/v1/otp/send \
 ```bash
 curl -s -H "Authorization: Bearer $KEY" localhost:8080/v1/otp/verify -d '{"id":"<id>","code":"123456"}'
 ```
+
+## Webhook event
+
+Event: `sent`, `open`, `click`, `reply`, `bounce`, `soft_bounce`, `complaint`, `unsubscribe`. Kalau `events` kosong, semua event dikirim.
+
+```json
+{"id":"evt_...","type":"bounce","created_at":"2026-11-02T02:00:00Z",
+ "data":{"message_id":"…","to":"andi@acme.id","category":"marketing","campaign_id":"…","reason":"5.1.1"}}
+```
+
+Setiap request membawa header `X-BalasEmail-Signature: t=<unix>,v1=<hex>`, dengan `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Tolak request yang `t`-nya lebih dari 5 menit dari waktu sekarang (`webhook.Verify` sudah melakukan ini). Respons 2xx berarti sukses. 5xx/429/timeout dicoba ulang hingga 8 kali dengan backoff. 4xx lainnya tidak dicoba ulang. Hanya URL `https://` publik yang diterima; alamat IP privat diblokir.
+
+## Bounce & complaint
+
+Semua email dikirim dengan return-path VERP `b<id><tag>@BOUNCE_DOMAIN`. Pasang record MX `BOUNCE_DOMAIN` ke smtpd. Daftarkan `fbl@BOUNCE_DOMAIN` sebagai alamat feedback loop di Yahoo, Microsoft (JMRP), dan lainnya.
+
+| Laporan | Efek |
+|---|---|
+| DSN `Action: failed` + status 5.x.x | status `bounced`, suppression `hard_bounce`, sequence berhenti, webhook `bounce` |
+| DSN delayed / 4.x.x | event `soft_bounce` saja |
+| ARF (selain `not-spam`) | suppression `complaint` (permanen), semua sequence kontak berhenti, webhook `complaint` |
 
 ## SMTP
 

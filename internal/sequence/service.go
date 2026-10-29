@@ -75,9 +75,9 @@ type Service struct {
 }
 
 func NewService(db *pgxpool.Pool, d *delivery.Service, domains SenderAuthorizer, contacts ContactTagger,
-	sms SMSSender, q *queue.Queue, signer *security.Signer) *Service {
+	sms SMSSender, q *queue.Queue, signer *security.Signer, client *http.Client) *Service {
 	s := &Service{db: db, delivery: d, domains: domains, contacts: contacts, sms: sms, q: q, signer: signer,
-		limits: DefaultLimits, client: &http.Client{Timeout: 10 * time.Second}}
+		limits: DefaultLimits, client: client}
 	d.OnEvent(s.onDeliveryEvent)
 	return s
 }
@@ -412,7 +412,7 @@ func (s *Service) onDeliveryEvent(ctx context.Context, ev delivery.Event) {
 	}
 	var reason string
 	switch ev.Type {
-	case "reply", "bounce", "unsubscribe":
+	case "reply", "bounce", "complaint", "unsubscribe":
 		reason = ev.Type
 	case "click":
 		reason = "click"
@@ -423,15 +423,15 @@ func (s *Service) onDeliveryEvent(ctx context.Context, ev delivery.Event) {
 		UPDATE enrollments e SET status='stopped', stop_reason=$2, updated_at=now()
 		FROM sequences q
 		WHERE e.id=$1 AND q.id=e.sequence_id AND e.status='active'
-		  AND ($2 IN ('bounce','unsubscribe')
+		  AND ($2 IN ('bounce','complaint','unsubscribe')
 		       OR ($2='reply' AND coalesce((q.definition->'settings'->>'stop_on_reply')::boolean, true))
 		       OR ($2='click' AND coalesce((q.definition->'settings'->>'stop_on_click')::boolean, false)))`,
 		ev.EnrollmentID, reason)
 	if err != nil {
 		slog.Error("auto-stop enrollment", "err", err)
 	}
-	if reason == "unsubscribe" && ev.ContactID != "" {
-		// Unsubscribing from one sequence stops all of them for that contact.
+	if (reason == "unsubscribe" || reason == "complaint") && ev.ContactID != "" {
+		// Unsubscribing (or complaining) about one sequence stops all of them for that contact.
 		_, _ = s.db.Exec(ctx, `UPDATE enrollments SET status='stopped', stop_reason='unsubscribe', updated_at=now()
 			WHERE contact_id=$1 AND status='active'`, ev.ContactID)
 	}

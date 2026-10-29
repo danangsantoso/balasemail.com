@@ -15,6 +15,7 @@ x-app: &app
     SMTP_SUBMISSION_ADDR: ":2587"
     SMTP_INBOUND_ADDR: ":2525"
     SMS_DOMAIN: sms.balasemail.local
+    BOUNCE_DOMAIN: bounces.balasemail.local
     SMS_PROVIDERS: log
 
 services:
