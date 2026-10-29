@@ -58,7 +58,12 @@ const errorText = {
   invalid_phone: "Nomor HP tidak valid.",
   otp_rate_limited: "Terlalu banyak kode diminta untuk penerima ini. Coba lagi nanti.",
   missing_from: "Isi alamat pengirim (di domain terverifikasi) untuk OTP email.",
-  invalid_csv: "File CSV tidak valid. Pastikan ada kolom 'email'.",
+  invalid_csv: "Baris pertama file harus berisi judul kolom, termasuk kolom 'email'.",
+  unsupported_xls: "File Excel lama (.xls) belum didukung. Simpan ulang sebagai Excel Workbook (.xlsx) atau CSV.",
+  invalid_xlsx: "File Excel tidak bisa dibaca. Pastikan formatnya .xlsx dan tidak dilindungi password.",
+  empty_file: "File tidak berisi alamat email.",
+  file_too_large: "Ukuran file maksimal 50MB.",
+  too_many_rows: "Maksimal 100.000 baris per impor. Bagi file menjadi beberapa bagian.",
   not_a_company_domain: "Pencarian hanya untuk domain perusahaan.",
   crawl_failed: "Website perusahaan tidak bisa diakses.",
   no_mx: "Domain ini tidak menerima email.",
@@ -209,6 +214,28 @@ pages.domains = async () => {
     box);
 };
 
+// importResult holds the last import report so it survives the page refresh after importing.
+let importResult = null;
+
+// rowError translates the parser's per-row messages.
+function rowError(msg) {
+  return msg
+    .replace(/^invalid email "(.*)"$/, 'alamat email tidak valid: "$1"')
+    .replace(/^duplicate email (.*)$/, "email ganda di file: $1")
+    .replace(/^no email address found in (.*)$/, "tidak ada alamat email di $1");
+}
+
+function importReport() {
+  const r = importResult;
+  importResult = null;
+  if (!r) return null;
+  return h("div", { class: "callout" + (r.skipped ? " warn" : ""), style: "margin:14px 0 0" },
+    h("b", {}, `Hasil impor (${r.format.toUpperCase()}): `), `${r.imported} kontak baru, ${r.updated} diperbarui, ${r.skipped} dilewati.`,
+    r.errors && r.errors.length ? h("ul", { style: "margin:6px 0 0;padding-left:18px" },
+      r.errors.slice(0, 8).map((e) => h("li", {}, `Baris ${e.row}: ${rowError(e.error)}`)),
+      r.errors.length > 8 ? h("li", {}, `…dan ${r.errors.length - 8} baris lainnya`) : null) : null);
+}
+
 pages.contacts = async () => {
   const q = new URLSearchParams(location.hash.split("?")[1] || "");
   const list = await api("GET", "/v1/contacts?limit=100&q=" + encodeURIComponent(q.get("q") || "") + "&tag=" + encodeURIComponent(q.get("tag") || ""));
@@ -227,15 +254,21 @@ pages.contacts = async () => {
         await api("POST", "/v1/contacts", { email: v.email, first_name: v.first_name, company: v.company, title: v.title, phone: v.phone, tags: csv(v.tags) });
         toast("Kontak disimpan"); route();
       })),
-      card("Impor CSV", form([
-        { name: "file", label: "File CSV", type: "file", accept: ".csv,text/csv", required: true, full: true,
-          help: "Kolom wajib: email. Kolom lain dikenali: nama depan, perusahaan, jabatan, telepon, tags. Kolom lain jadi field kustom." },
+      card("Impor dari file", form([
+        { name: "file", label: "File Excel (.xlsx), CSV, atau TXT", type: "file", accept: ".xlsx,.csv,.txt,.tsv,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", required: true, full: true,
+          help: "Excel/CSV: baris pertama berisi judul kolom, wajib ada kolom email. Kolom yang dikenali: nama depan, nama belakang, perusahaan, jabatan, no hp, tags; kolom lain jadi field kustom. TXT: satu email per baris, atau format Nama <email>." },
         { name: "tags", label: "Tag untuk semua baris", placeholder: "import-nov", full: true },
       ], "Impor", async (v) => {
         const fd = new FormData(); fd.append("file", v.file); fd.append("tags", v.tags);
         const r = await api("POST", "/v1/contacts/import", fd);
-        toast(`Impor: ${r.imported} baru, ${r.updated} diperbarui, ${r.skipped} dilewati`); route();
-      }, h("button", { type: "button", onclick: (e) => run(e.target, async () => { await api("POST", "/v1/contacts/validate", {}); toast("Validasi massal dijadwalkan"); }) }, "Validasi semua")))),
+        importResult = r;
+        toast(`Impor ${r.format.toUpperCase()}: ${r.imported} baru, ${r.updated} diperbarui, ${r.skipped} dilewati`); route();
+      }, h("button", { type: "button", onclick: (e) => run(e.target, async () => { await api("POST", "/v1/contacts/validate", {}); toast("Validasi massal dijadwalkan"); }) }, "Validasi semua")),
+        h("div", { class: "samples" }, h("span", { class: "help" }, "Unduh contoh file: "),
+          h("a", { href: "/static/contoh/kontak-contoh.xlsx", download: "kontak-contoh.xlsx" }, "Excel (.xlsx)"),
+          h("a", { href: "/static/contoh/kontak-contoh.csv", download: "kontak-contoh.csv" }, "CSV"),
+          h("a", { href: "/static/contoh/kontak-contoh.txt", download: "kontak-contoh.txt" }, "TXT")),
+        importReport())),
     card(null, h("div", { class: "row spread", style: "margin-bottom:10px" }, h("h2", { style: "margin:0" }, "Daftar kontak"), search),
       table([
         { label: "Email", key: "email" },

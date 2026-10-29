@@ -15,7 +15,7 @@ Semua endpoint `/v1/*`, kecuali register/login, membutuhkan `Authorization: Bear
 | `POST /v1/validations` | F2 | Satu email, sinkron |
 | `POST /v1/validations/batch` | F2 | ≤100 email, sinkron |
 | `GET/POST /v1/contacts`, `GET/DELETE /v1/contacts/{id}` | F7 | `DELETE ?suppress=true` = permintaan hapus data |
-| `POST /v1/contacts/import` | F7 | multipart `file` (CSV), `tags` |
+| `POST /v1/contacts/import` | F7 | multipart `file` (.xlsx, .csv, .txt), `tags`. Lihat bagian "Impor kontak" |
 | `POST /v1/contacts/validate` | F2 | Validasi massal di background `{tag}` |
 | `GET/POST /v1/suppressions`, `DELETE /v1/suppressions/{value}` | §8 | Entri complaint/erasure tidak bisa dihapus |
 | `GET/POST /v1/campaigns`, `GET/PUT /v1/campaigns/{id}` | F7 | |
@@ -36,6 +36,19 @@ Semua endpoint `/v1/*`, kecuali register/login, membutuhkan `Authorization: Bear
 | `GET /t/o/{token}`, `GET /t/c/{token}` | F7 | Tracking (publik) |
 | `GET/POST /u/{token}` | §8 | Unsubscribe 1-klik (publik) |
 | `GET /healthz`, `GET /readyz` | | Probe |
+
+## Impor kontak
+
+| Format | Aturan |
+|---|---|
+| Excel `.xlsx` | Sheet pertama dibaca. Baris pertama = judul kolom, wajib ada kolom `email`. File `.xls` lama harus disimpan ulang sebagai `.xlsx` |
+| CSV / TSV | Pemisah `,` `;` tab atau `\|` dideteksi otomatis, jadi CSV dari Excel berbahasa Indonesia (titik koma) langsung bisa. Encoding UTF-8 (dengan/tanpa BOM) dan UTF-16 didukung |
+| TXT | Satu email per baris, atau format `Nama <email>`. Teks bebas yang mengandung email juga bisa. Baris yang diawali `#` diabaikan |
+
+Kolom yang dikenali (Indonesia/Inggris): `email`, `nama depan`, `nama belakang`, `perusahaan`, `jabatan`, `no hp`, `tags` (pisahkan dengan `;`). Kolom lain disimpan sebagai field kustom dan bisa dipakai di template, misalnya `{{kota}}`. Email ganda di dalam satu file dilewati. Respons berisi `format`, jumlah baru/diperbarui/dilewati, dan nomor baris yang bermasalah.
+
+Contoh file bisa diunduh dari dashboard (Kontak → Unduh contoh file) atau langsung:
+`/static/contoh/kontak-contoh.xlsx`, `/static/contoh/kontak-contoh.csv`, `/static/contoh/kontak-contoh.txt`.
 
 ## Contoh: funnel 3 layer
 

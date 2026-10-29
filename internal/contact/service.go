@@ -4,8 +4,6 @@ package contact
 
 import (
 	"context"
-	"encoding/csv"
-	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -226,7 +224,7 @@ func (s *Service) RemoveTags(ctx context.Context, wsID, id string, tags []string
 	return err
 }
 
-// ---- CSV import ----
+// ---- import (CSV / Excel / TXT, see importfile.go) ----
 
 type RowError struct {
 	Row   int    `json:"row"`
@@ -238,103 +236,24 @@ type ImportReport struct {
 	Imported int        `json:"imported"`
 	Updated  int        `json:"updated"`
 	Skipped  int        `json:"skipped"`
+	Format   string     `json:"format"`
 	Errors   []RowError `json:"errors,omitempty"`
 }
 
-// Column aliases accepted in CSV headers (English and Indonesian).
-var columnAliases = map[string]string{
-	"email": "email", "e-mail": "email", "alamat email": "email",
-	"first_name": "first_name", "firstname": "first_name", "first name": "first_name", "nama depan": "first_name", "nama": "first_name",
-	"last_name": "last_name", "lastname": "last_name", "last name": "last_name", "nama belakang": "last_name",
-	"company": "company", "perusahaan": "company", "organization": "company",
-	"title": "title", "job title": "title", "jabatan": "title", "position": "title",
-	"phone": "phone", "telepon": "phone", "hp": "phone", "no hp": "phone", "mobile": "phone",
-	"tags": "tags", "tag": "tags",
-}
-
-// MaxImportRows bounds a synchronous import.
-const MaxImportRows = 100_000
-
-// ParseCSV converts CSV rows into inputs. Unknown columns become custom fields.
-func ParseCSV(r io.Reader, defaultTags []string) ([]Input, []RowError, error) {
-	cr := csv.NewReader(r)
-	cr.FieldsPerRecord = -1
-	cr.TrimLeadingSpace = true
-	header, err := cr.Read()
+// Import parses a CSV, Excel (.xlsx) or TXT file and upserts the rows in batches.
+func (s *Service) Import(ctx context.Context, wsID, filename string, r io.Reader, defaultTags []string) (ImportReport, error) {
+	data, err := io.ReadAll(io.LimitReader(r, MaxImportBytes+1))
 	if err != nil {
-		return nil, nil, apperr.Invalid("invalid_csv", "CSV header row is missing")
+		return ImportReport{}, apperr.Invalid("invalid_file", "could not read the uploaded file")
 	}
-	mapping := make([]string, len(header))
-	hasEmail := false
-	for i, h := range header {
-		key := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "\ufeff")))
-		if canon, ok := columnAliases[key]; ok {
-			mapping[i] = canon
-		} else {
-			mapping[i] = "field:" + strings.ReplaceAll(key, " ", "_")
-		}
-		hasEmail = hasEmail || mapping[i] == "email"
+	if len(data) > MaxImportBytes {
+		return ImportReport{}, apperr.Invalid("file_too_large", "file is larger than 50MB")
 	}
-	if !hasEmail {
-		return nil, nil, apperr.Invalid("invalid_csv", "CSV must contain an 'email' column")
-	}
-	var inputs []Input
-	var rowErrs []RowError
-	for line := 2; ; line++ {
-		rec, err := cr.Read()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			rowErrs = append(rowErrs, RowError{Row: line, Error: err.Error()})
-			continue
-		}
-		if len(inputs) >= MaxImportRows {
-			return nil, nil, apperr.Invalid("too_many_rows", fmt.Sprintf("import is limited to %d rows", MaxImportRows))
-		}
-		in := Input{Fields: map[string]string{}, Tags: slices.Clone(defaultTags), Source: "import"}
-		for i, val := range rec {
-			if i >= len(mapping) {
-				break
-			}
-			val = strings.TrimSpace(val)
-			switch m := mapping[i]; m {
-			case "email":
-				in.Email = val
-			case "first_name":
-				in.FirstName = val
-			case "last_name":
-				in.LastName = val
-			case "company":
-				in.Company = val
-			case "title":
-				in.Title = val
-			case "phone":
-				in.Phone = val
-			case "tags":
-				in.Tags = append(in.Tags, strings.FieldsFunc(val, func(r rune) bool { return r == ';' || r == '|' || r == ',' })...)
-			default:
-				if val != "" {
-					in.Fields[strings.TrimPrefix(m, "field:")] = val
-				}
-			}
-		}
-		if err := normalizeInput(&in); err != nil {
-			rowErrs = append(rowErrs, RowError{Row: line, Error: apperr.As(err).Message})
-			continue
-		}
-		inputs = append(inputs, in)
-	}
-	return inputs, rowErrs, nil
-}
-
-// Import upserts parsed rows in batches.
-func (s *Service) Import(ctx context.Context, wsID string, r io.Reader, defaultTags []string) (ImportReport, error) {
-	inputs, rowErrs, err := ParseCSV(r, defaultTags)
+	inputs, rowErrs, format, err := ParseFile(filename, data, defaultTags)
 	if err != nil {
 		return ImportReport{}, err
 	}
-	rep := ImportReport{Total: len(inputs) + len(rowErrs), Skipped: len(rowErrs), Errors: rowErrs}
+	rep := ImportReport{Total: len(inputs) + len(rowErrs), Skipped: len(rowErrs), Errors: rowErrs, Format: format}
 	if len(rep.Errors) > 100 {
 		rep.Errors = rep.Errors[:100]
 	}

@@ -63,15 +63,15 @@ func (s *Service) handleDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// POST /v1/contacts/import — multipart form with "file" (CSV) and optional "tags".
+// POST /v1/contacts/import — multipart form with "file" (.csv, .xlsx or .txt) and optional "tags".
 func (s *Service) handleImport(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 	// Body size is capped by MaxBytesReader above; 8MB is held in memory, the rest spills to disk.
 	if err := r.ParseMultipartForm(8 << 20); err != nil { //nolint:gosec // G120: bounded by MaxBytesReader
-		httpx.Error(w, r, apperr.Invalid("invalid_form", "expected multipart/form-data with a 'file' field (max 50MB)"))
+		httpx.Error(w, r, apperr.Invalid("invalid_form", "expected multipart/form-data with a 'file' field (.csv, .xlsx or .txt, max 50MB)"))
 		return
 	}
-	f, _, err := r.FormFile("file")
+	f, fh, err := r.FormFile("file")
 	if err != nil {
 		httpx.Error(w, r, apperr.Invalid("missing_file", "field 'file' is required"))
 		return
@@ -81,7 +81,7 @@ func (s *Service) handleImport(w http.ResponseWriter, r *http.Request) {
 	if t := r.FormValue("tags"); t != "" {
 		tags = strings.Split(t, ",")
 	}
-	rep, err := s.Import(r.Context(), authctx.MustFrom(r.Context()).WorkspaceID, f, tags)
+	rep, err := s.Import(r.Context(), authctx.MustFrom(r.Context()).WorkspaceID, fh.Filename, f, tags)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return

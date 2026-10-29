@@ -5,7 +5,9 @@ package web
 import (
 	"embed"
 	"io/fs"
+	"mime"
 	"net/http"
+	"path"
 )
 
 //go:embed static
@@ -23,11 +25,27 @@ func secure(h http.Handler) http.Handler {
 	})
 }
 
-// Routes mounts the dashboard at / and its assets at /static/.
+// Distroless images ship no /etc/mime.types, so register what the samples need.
+func init() {
+	_ = mime.AddExtensionType(".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	_ = mime.AddExtensionType(".csv", "text/csv; charset=utf-8")
+	_ = mime.AddExtensionType(".txt", "text/plain; charset=utf-8")
+}
+
+// download makes sample files save to disk instead of opening in the browser.
+func download(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename="`+path.Base(r.URL.Path)+`"`)
+		h.ServeHTTP(w, r)
+	})
+}
+
+// Routes mounts the dashboard at / and its assets at /static/ (import samples under /static/contoh/).
 func Routes(mux *http.ServeMux) {
 	static, _ := fs.Sub(files, "static")
-	assets := http.FileServer(http.FS(static))
-	mux.Handle("GET /static/", secure(http.StripPrefix("/static/", assets)))
+	assets := http.StripPrefix("/static/", http.FileServer(http.FS(static)))
+	mux.Handle("GET /static/", secure(assets))
+	mux.Handle("GET /static/contoh/", secure(download(assets)))
 	mux.Handle("GET /{$}", secure(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFileFS(w, r, static, "index.html")

@@ -38,6 +38,18 @@ func TestDashboardRoutes(t *testing.T) {
 			t.Errorf("%s = %d", asset, resp.StatusCode)
 		}
 	}
+	samples := map[string]string{
+		"/static/contoh/kontak-contoh.xlsx": "spreadsheetml",
+		"/static/contoh/kontak-contoh.csv":  "text/csv",
+		"/static/contoh/kontak-contoh.txt":  "text/plain",
+	}
+	for p, ctype := range samples {
+		resp, body := get(p)
+		if resp.StatusCode != 200 || len(body) == 0 || !strings.Contains(resp.Header.Get("Content-Type"), ctype) ||
+			!strings.HasPrefix(resp.Header.Get("Content-Disposition"), "attachment") {
+			t.Errorf("%s: %d %q %q", p, resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Disposition"))
+		}
+	}
 	if _, body := get("/v1/me"); body != "api" {
 		t.Error("dashboard must not shadow API routes")
 	}

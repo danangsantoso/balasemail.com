@@ -12,7 +12,7 @@ Platform email outreach & otomasi komunikasi B2B (Golang). Spesifikasi produk ad
 | F4 OTP | `internal/otp` | Kode di-hash (HMAC, terikat ID), TTL, batas percobaan, rate limit, antrian prioritas, fallback ke SMS |
 | F5 Wajib email bisnis | `internal/auth`, `internal/senderdomain` | Tolak Gmail/Yahoo/disposable; verifikasi domain via TXT; cek SPF/DKIM/DMARC; kunci DKIM 2048-bit terenkripsi |
 | F6 SMTP Gateway | `internal/smtpgw`, `internal/mailer`, `internal/delivery` | Submission relay (AUTH memakai API key), MX inbound, DKIM signing, failover provider + circuit breaker, throttle per domain, bounce menjadi suppression |
-| F7 Mass email | `internal/campaign`, `internal/contact` | Import CSV (header ID/EN), segmentasi tag, spintax + personalisasi, kuota harian, laju kirim, tracking open/klik, unsubscribe 1-klik (RFC 8058) |
+| F7 Mass email | `internal/campaign`, `internal/contact` | Import Excel (.xlsx), CSV, dan TXT dengan contoh file yang bisa diunduh, segmentasi tag, spintax + personalisasi, kuota harian, laju kirim, tracking open/klik, unsubscribe 1-klik (RFC 8058) |
 | F8 Alias unik | `internal/alias` | Generator pola `{first}.{division}`, bulk, auto-suffix saat bentrok, forward per alias |
 | F9 Auto-reply | `internal/inbound` | Rule engine, klasifikasi balasan (ID/EN), anti-loop (RFC 3834) + batas 1x/24 jam per pengirim |
 | F10 Auto-forward | `internal/inbound` | Forward berbasis aturan/klasifikasi, round-robin antar sales, dikirim ulang dari domain sendiri agar lolos DMARC |
