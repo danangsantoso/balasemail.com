@@ -105,7 +105,18 @@ button:disabled { opacity: .6; cursor: wait; }
 
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }
-  .side { position: static; height: auto; }
+  .side { position: sticky; top: 0; height: auto; z-index: 5; padding: 10px 12px 8px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .side .brand { padding: 0 4px 8px; }
+  .nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav-group { display: none; }
+  .nav a { white-space: nowrap; flex: none; }
+  .topbar { flex-direction: column; }
+  .who { text-align: left; }
   main { padding: 20px 16px; }
-  .grid.cols-2, .grid.cols-4, form .fields { grid-template-columns: 1fr; }
+  .grid.cols-2, form .fields { grid-template-columns: 1fr; }
+  .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .grid > .card { margin-bottom: 0; }
+  .grid { margin-bottom: 16px; }
+  .stat .value { font-size: 22px; }
 }
