@@ -11,7 +11,7 @@ import (
 func TestDashboardRoutes(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("api")) })
-	Routes(mux)
+	Routes(mux, Options{ContactWhatsApp: "+628123456789"})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -27,13 +27,30 @@ func TestDashboardRoutes(t *testing.T) {
 	}
 
 	resp, body := get("/")
+	if resp.StatusCode != 200 {
+		t.Fatalf("landing: %d", resp.StatusCode)
+	}
+	for _, want := range []string{"Coba Gratis 3 Hari", "30 email per hari", "Rp99.000", "Rp2.990.000", `class="plan popular"`,
+		`href="/app#/daftar?paket=growth"`, "https://wa.me/628123456789", "mailto:sales@balasemail.com"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("landing page is missing %q", want)
+		}
+	}
+	if strings.Contains(body, "style=") {
+		t.Error("landing page must not use inline styles (blocked by the CSP)")
+	}
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
+		t.Errorf("landing CSP = %q", csp)
+	}
+
+	resp, body = get("/app")
 	if resp.StatusCode != 200 || !strings.Contains(body, `<script src="/static/app.js">`) {
-		t.Fatalf("index: %d %q", resp.StatusCode, body)
+		t.Fatalf("dashboard: %d %q", resp.StatusCode, body)
 	}
 	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "unsafe") {
 		t.Errorf("CSP = %q", csp)
 	}
-	for _, asset := range []string{"/static/app.js", "/static/app.css", "/static/brand/logo-mark.svg", "/static/brand/favicon.svg", "/favicon.ico"} {
+	for _, asset := range []string{"/static/app.js", "/static/app.css", "/static/landing.css", "/static/landing.js", "/static/brand/dashboard.jpg", "/static/brand/logo-mark.svg", "/static/brand/favicon.svg", "/favicon.ico"} {
 		if resp, _ := get(asset); resp.StatusCode != 200 {
 			t.Errorf("%s = %d", asset, resp.StatusCode)
 		}

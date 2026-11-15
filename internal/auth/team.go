@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/danangsantoso/balasemail.com/internal/billing"
 	"github.com/danangsantoso/balasemail.com/internal/emailaddr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/apperr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/authctx"
@@ -63,6 +64,9 @@ func (s *Service) AddMember(ctx context.Context, wsID string, in MemberInput) (U
 	}
 	if len(in.Password) < 10 {
 		return User{}, apperr.Invalid("weak_password", "password must be at least 10 characters")
+	}
+	if err := billing.CheckSeat(ctx, s.db, wsID); err != nil {
+		return User{}, err
 	}
 	hash, err := security.HashPassword(in.Password)
 	if err != nil {

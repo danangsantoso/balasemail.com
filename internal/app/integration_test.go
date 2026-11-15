@@ -373,6 +373,7 @@ func TestMultiTenantRoles(t *testing.T) {
 
 	// Tenant A: admin adds a regular user.
 	adminA := h.register("PT Maju", "budi@maju.co.id")
+	h.sql(`UPDATE workspaces SET plan='growth', plan_ends_at=NULL WHERE name='PT Maju'`) // the trial allows a single user
 	h.do("POST", "/v1/contacts", map[string]any{"email": "klien@contoh.co.id"}, 200)
 	member := h.do("POST", "/v1/team", map[string]string{"email": "sari@maju.co.id", "full_name": "Sari", "role": "user", "password": "password-sari-123"}, 201)
 	h.do("POST", "/v1/team", map[string]string{"email": "x@gmail.com", "full_name": "X", "password": "password-sari-123"}, 422)
@@ -446,4 +447,83 @@ func TestMultiTenantRoles(t *testing.T) {
 	if len(st["series"].([]any)) != 14 {
 		t.Fatalf("stats series = %v", st["series"])
 	}
+}
+
+func TestTrialAndPlans(t *testing.T) {
+	t.Setenv("SUPERADMIN_EMAILS", "root@platform.co.id")
+	h := setup(t)
+
+	// The catalog is public: the landing page and the dashboard read the same plans.
+	if plans := h.do("GET", "/v1/plans", nil, 200)["plans"].([]any); len(plans) != 5 {
+		t.Fatalf("plans = %d, want 5", len(plans))
+	}
+
+	// A new tenant starts on the 3-day trial at 30 emails a day.
+	admin := h.register("PT Coba", "dina@coba.co.id")
+	b := h.do("GET", "/v1/billing", nil, 200)
+	if b["plan"].(map[string]any)["key"] != "trial" || b["daily_send_limit"].(float64) != 30 || b["days_left"].(float64) != 3 || b["expired"] != false {
+		t.Fatalf("new tenant billing = %v", b)
+	}
+	// The same company cannot restart the trial with another mailbox.
+	h.tok = ""
+	h.do("POST", "/v1/auth/register", map[string]string{"company_name": "PT Coba 2", "full_name": "Eko",
+		"email": "eko@coba.co.id", "password": "password-kuat-123"}, 409)
+
+	// Trial limits: one user, one sender domain, 100 contacts.
+	h.tok = admin
+	h.do("POST", "/v1/team", map[string]string{"email": "eko@coba.co.id", "full_name": "Eko", "password": "password-kuat-123"}, 402)
+	h.do("POST", "/v1/domains", map[string]string{"name": "coba.co.id"}, 201)
+	h.do("POST", "/v1/domains", map[string]string{"name": "coba-lain.co.id"}, 402)
+	h.sql(`INSERT INTO contacts (workspace_id, email) SELECT id, 'k' || n || '@klien.co.id' FROM workspaces, generate_series(1, 100) n WHERE name='PT Coba'`)
+	h.do("POST", "/v1/contacts", map[string]any{"email": "baru@klien.co.id"}, 402)
+	h.do("POST", "/v1/contacts", map[string]any{"email": "k1@klien.co.id", "first_name": "Kiki"}, 200) // updating an existing contact is fine
+
+	// Asking for an upgrade is recorded for the platform admin.
+	h.do("POST", "/v1/billing/upgrade-request", map[string]string{"plan": "trial"}, 422)
+	if b := h.do("POST", "/v1/billing/upgrade-request", map[string]string{"plan": "growth", "cycle": "yearly"}, 200); b["requested_plan"] != "growth" {
+		t.Fatalf("upgrade request = %v", b)
+	}
+
+	// When the trial ends, sending and prospecting stop; data stays readable.
+	h.sql(`UPDATE workspaces SET plan_ends_at = now() - interval '1 hour' WHERE name='PT Coba'`)
+	h.do("POST", "/v1/finder/person", map[string]string{"first_name": "A", "last_name": "B", "domain": "klien.co.id"}, 402)
+	h.do("POST", "/v1/otp/send", map[string]string{"to": "a@klien.co.id"}, 402)
+	h.do("GET", "/v1/contacts", nil, 200)
+	if b := h.do("GET", "/v1/billing", nil, 200); b["expired"] != true {
+		t.Fatalf("expired trial billing = %v", b)
+	}
+	var wsID string
+	if err := h.a.DB.QueryRow(context.Background(), `SELECT id FROM workspaces WHERE name='PT Coba'`).Scan(&wsID); err != nil {
+		t.Fatal(err)
+	}
+	if left, err := h.a.Delivery.RemainingQuota(context.Background(), wsID); err != nil || left != 0 {
+		t.Fatalf("expired trial quota = %d, %v", left, err)
+	}
+
+	// The platform admin activates the requested plan for a year.
+	h.register("Platform", "root@platform.co.id")
+	if b := h.do("GET", "/v1/billing", nil, 200); b["plan"].(map[string]any)["key"] != "enterprise" || b["plan_ends_at"] != nil {
+		t.Fatalf("platform operators are not put on a trial: %v", b)
+	}
+	up := h.do("PATCH", "/v1/admin/tenants/"+wsID, map[string]any{"plan": "growth", "months": 12}, 200)
+	if up["plan"] != "growth" || up["daily_send_limit"].(float64) != 2500 || up["requested_plan"] != nil {
+		t.Fatalf("activated tenant = %v", up)
+	}
+	ends, err := time.Parse(time.RFC3339, up["plan_ends_at"].(string))
+	if err != nil || time.Until(ends) < 360*24*time.Hour || time.Until(ends) > 370*24*time.Hour {
+		t.Fatalf("plan_ends_at = %v (%v), want about a year from now", up["plan_ends_at"], err)
+	}
+	// Extending adds to the end of the current period.
+	ext := h.do("PATCH", "/v1/admin/tenants/"+wsID, map[string]any{"months": 1}, 200)
+	if ends2, _ := time.Parse(time.RFC3339, ext["plan_ends_at"].(string)); ends2.Sub(ends) < 27*24*time.Hour {
+		t.Fatalf("extension moved the end from %v to %v", ends, ends2)
+	}
+
+	// The tenant is unblocked and gets the bigger limits.
+	h.tok = admin
+	if b := h.do("GET", "/v1/billing", nil, 200); b["expired"] != false || b["requested_plan"] != nil {
+		t.Fatalf("billing after activation = %v", b)
+	}
+	h.do("POST", "/v1/team", map[string]string{"email": "eko@coba.co.id", "full_name": "Eko", "password": "password-kuat-123"}, 201)
+	h.do("POST", "/v1/contacts", map[string]any{"email": "baru@klien.co.id"}, 200)
 }

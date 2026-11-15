@@ -4,13 +4,16 @@ Semua endpoint `/v1/*`, kecuali register/login, membutuhkan `Authorization: Bear
 
 | Method & path | Fitur | Keterangan |
 |---|---|---|
-| `POST /v1/auth/register` | F5 | Wajib email bisnis; membuat workspace (tenant) + admin |
+| `POST /v1/auth/register` | F5 | Wajib email bisnis; membuat workspace (tenant) + admin dengan paket `trial` (3 hari, 30 email/hari). Satu domain perusahaan = satu workspace (`409 company_exists`) |
 | `POST /v1/auth/login` | | |
 | `GET /v1/me` | | User (`role`, `platform_role`) + workspace (kuota, kredit SMS) |
 | `GET /v1/stats/overview?days=14` | | Seri harian terkirim/dibuka/diklik/dibalas (1–90 hari), total + periode sebelumnya, klasifikasi balasan, kualitas kontak |
 | `GET/POST /v1/team`, `PATCH /v1/team/{id}` | | Anggota workspace. Tambah/ubah hanya **admin**; `{role: admin\|user, disabled}`; admin aktif terakhir tidak bisa diturunkan |
+| `GET /v1/plans` | | Publik: katalog paket (harga, kuota) dan daftar fitur |
+| `GET /v1/billing` | | Paket workspace, tanggal berakhir, sisa hari, pemakaian (email hari ini, kontak, pengguna, domain), permintaan upgrade |
+| `POST /v1/billing/upgrade-request` | | **Admin**: `{plan, cycle: monthly\|yearly}`; dicatat untuk diaktifkan Super Admin |
 | `GET /v1/admin/overview?days=30` | | **Super admin**: ringkasan platform, tenant baru per hari, tenant teratas, sebaran paket |
-| `GET /v1/admin/tenants?q=&status=`, `PATCH /v1/admin/tenants/{id}` | | **Super admin**: `{status: active\|suspended, plan, daily_send_limit, add_sms_credits}` |
+| `GET /v1/admin/tenants?q=&status=`, `PATCH /v1/admin/tenants/{id}` | | **Super admin**: `{status: active\|suspended, plan, months, daily_send_limit, add_sms_credits}`. `plan` memulai periode baru (kuota mengikuti paket, `months` bawaan 1); `months` saja memperpanjang |
 | `GET/POST /v1/api-keys`, `DELETE /v1/api-keys/{id}` | F4/F6 | API key juga dipakai sebagai password SMTP |
 | `GET/POST /v1/domains`, `GET /v1/domains/{id}` | F5 | Respons berisi `dns_records` yang perlu dipasang |
 | `POST /v1/domains/{id}/check` | F5 | Cek ulang TXT verifikasi, SPF, DKIM, DMARC |
@@ -52,6 +55,22 @@ Setiap workspace adalah satu **tenant**; semua data (kontak, kampanye, inbox, do
 | `user` | Satu tenant | Pekerjaan harian: cari/validasi/impor kontak, kampanye, sequence, inbox, OTP, SMS |
 
 Endpoint yang ditolak mengembalikan `403 forbidden`. Peran dan status dibaca ulang dari database di setiap request, sehingga menurunkan peran/menonaktifkan user berlaku seketika. Tenant yang ditangguhkan mendapat `403 workspace_suspended`.
+
+## Paket & masa coba
+
+| Paket | Harga/bulan | Email/hari | Kontak | Pengguna | Domain |
+|---|---|---|---|---|---|
+| `trial` (3 hari) | Gratis | 30 | 100 | 1 | 1 |
+| `starter` | Rp99.000 | 500 | 2.500 | 2 | 1 |
+| `growth` | Rp299.000 | 2.500 | 15.000 | 5 | 3 |
+| `business` | Rp799.000 | 10.000 | 75.000 | 15 | 10 |
+| `enterprise` | Sesuai kesepakatan | Sesuai kebutuhan | — | — | — |
+
+Harga tahunan = 10× harga bulanan. Semua paket mendapat semua fitur; angka di atas diubah di `internal/billing/plans.go`.
+
+- Melewati batas kontak, pengguna, atau domain mengembalikan `402` dengan kode `plan_limit_contacts`, `plan_limit_users`, atau `plan_limit_domains`.
+- Setelah `plan_ends_at` lewat, endpoint kirim (kampanye, sequence, OTP, SMS), finder, dan validasi mengembalikan `402 plan_expired`; email yang masih di antrian gagal dengan alasan yang sama. Data tetap bisa dibaca.
+- Belum ada payment gateway (milestone M4): Super Admin mengaktifkan paket secara manual setelah pembayaran dikonfirmasi.
 
 ## Impor kontak
 

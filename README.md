@@ -26,7 +26,9 @@ Platform email outreach & otomasi komunikasi B2B (Golang). Spesifikasi produk ad
 | F11 SMS via SMTP | `internal/sms`, `internal/smtpgw` | `08xx@sms.<domain>` → SMS; normalisasi nomor Indonesia; hitung segmen GSM-7/UCS-2; Twilio/Zenziva + failover; sistem kredit |
 | M1 Deliverability | `internal/bounce`, `internal/webhook`, `internal/platform/ratelimit`, `internal/platform/netguard` | Return-path VERP, parser DSN (RFC 3464) & ARF (RFC 5965), webhook event bertanda tangan, limiter bersama lintas worker, klien HTTP anti-SSRF, cek DNS berkala |
 | Multi-tenant & peran | `internal/auth`, `internal/app/policy.go`, `internal/admin` | Tiap workspace = tenant terisolasi. Peran **Super Admin** (konsol platform: semua tenant, paket, kuota, kredit SMS, tangguhkan; dari `SUPERADMIN_EMAILS`), **Admin** (kelola domain, tim, API key, webhook, aturan), **User** (operasional harian). Kebijakan akses terpusat per rute |
-| Dashboard | `internal/web`, `internal/stats` | SPA tanpa dependensi yang disajikan oleh `api` di `/`, warna mengikuti palet brand (terang & gelap): grafik aktivitas harian 7/14/30 hari, sparkline, klasifikasi balasan, kualitas kontak, konsol platform; domain, kontak, finder, validasi, kampanye, sequence, inbox & aturan, alias, OTP, SMS, API key, webhook, daftar blokir |
+| Paket & masa coba | `internal/billing` | Katalog paket (Coba Gratis 3 hari/30 email per hari, Starter, Growth, Business, Enterprise) sebagai satu sumber untuk landing page, dashboard, dan konsol. Batas email harian, kontak, pengguna, dan domain ditegakkan; saat masa coba/langganan habis, pengiriman dan pencarian berhenti. Tenant meminta upgrade, Super Admin mengaktifkan paket dan masa aktifnya |
+| Landing page | `internal/web` | Halaman publik di `/` (fitur, cara kerja, harga bulanan/tahunan, FAQ) yang dirender dari katalog paket; kontak dari `CONTACT_EMAIL` dan `CONTACT_WHATSAPP` |
+| Dashboard | `internal/web`, `internal/stats` | SPA tanpa dependensi yang disajikan oleh `api` di `/app`, warna mengikuti palet brand (terang & gelap): grafik aktivitas harian 7/14/30 hari, sparkline, klasifikasi balasan, kualitas kontak, konsol platform; domain, kontak, finder, validasi, kampanye, sequence, inbox & aturan, alias, OTP, SMS, API key, webhook, daftar blokir |
 | §8 Kepatuhan | `internal/suppression`, `internal/delivery` | Suppression global/workspace, footer identitas pengirim wajib, hak hapus data, auto-suspend jika bounce >5% atau complaint >0,3% |
 
 ## Arsitektur singkat
@@ -82,7 +84,7 @@ make run-worker # terminal 2
 make run-smtpd  # terminal 3
 ```
 
-Buka **http://localhost:8080** untuk dashboard web: daftar dengan email perusahaan, tambahkan domain, impor kontak, lalu buat kampanye atau sequence. Dengan `DEV_SKIP_DNS_CHECK=true` (bawaan `.env.example` dan docker-compose), domain langsung dianggap terverifikasi, jadi email bisa terkirim ke Mailpit (**http://localhost:8025**) tanpa memasang DNS. Pengaturan ini diabaikan saat `APP_ENV=production`.
+Buka **http://localhost:8080** untuk landing page dan **http://localhost:8080/app** untuk dashboard web: daftar dengan email perusahaan (masa coba 3 hari langsung aktif), tambahkan domain, impor kontak, lalu buat kampanye atau sequence. Dengan `DEV_SKIP_DNS_CHECK=true` (bawaan `.env.example` dan docker-compose), domain langsung dianggap terverifikasi, jadi email bisa terkirim ke Mailpit (**http://localhost:8025**) tanpa memasang DNS. Pengaturan ini diabaikan saat `APP_ENV=production`.
 
 Contoh lewat API:
 

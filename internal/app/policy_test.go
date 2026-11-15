@@ -9,6 +9,7 @@ import (
 	"github.com/danangsantoso/balasemail.com/internal/admin"
 	"github.com/danangsantoso/balasemail.com/internal/alias"
 	"github.com/danangsantoso/balasemail.com/internal/auth"
+	"github.com/danangsantoso/balasemail.com/internal/billing"
 	"github.com/danangsantoso/balasemail.com/internal/campaign"
 	"github.com/danangsantoso/balasemail.com/internal/contact"
 	"github.com/danangsantoso/balasemail.com/internal/delivery"
@@ -49,6 +50,8 @@ func TestAuthorize(t *testing.T) {
 		{super, "GET /v1/admin/tenants", true},
 		{super, "PATCH /v1/admin/tenants/{id}", true},
 		{apiKey, "GET /v1/admin/tenants", false}, // API keys never act as super admin
+		{user, "POST /v1/billing/upgrade-request", false},
+		{admin, "POST /v1/billing/upgrade-request", true},
 	}
 	for _, c := range cases {
 		err := Authorize(c.p, c.pattern)
@@ -61,20 +64,53 @@ func TestAuthorize(t *testing.T) {
 	}
 }
 
+// An ended trial or subscription blocks sending and prospecting, nothing else.
+func TestAuthorizePlanExpired(t *testing.T) {
+	expired := authctx.Principal{UserID: "a", Role: authctx.RoleAdmin, PlanExpired: true}
+	super := authctx.Principal{UserID: "s", Role: authctx.RoleAdmin, PlatformRole: authctx.RoleSuperAdmin, PlanExpired: true}
+	for pattern, ok := range map[string]bool{
+		"POST /v1/campaigns/{id}/launch":   false,
+		"POST /v1/otp/send":                false,
+		"POST /v1/finder/domain":           false,
+		"GET /v1/campaigns":                true,
+		"GET /v1/billing":                  true,
+		"POST /v1/billing/upgrade-request": true,
+		"POST /v1/contacts/import":         true,
+	} {
+		err := Authorize(expired, pattern)
+		if (err == nil) != ok {
+			t.Errorf("%s: err=%v want ok=%v", pattern, err, ok)
+		}
+		if err != nil && !apperr.Is(err, apperr.KindPaymentRequired) {
+			t.Errorf("%s: want payment required, got %v", pattern, err)
+		}
+	}
+	if err := Authorize(super, "POST /v1/campaigns/{id}/launch"); err != nil {
+		t.Errorf("platform operators are not blocked by their own plan: %v", err)
+	}
+}
+
 // Every admin-only entry must name a real route, otherwise a typo silently
 // leaves the real route open to regular users.
 func TestAdminOnlyPatternsExist(t *testing.T) {
 	a := &App{Auth: &auth.Service{}, Domains: &senderdomain.Service{}, Validator: &validator.Validator{}, Finder: &finder.Service{},
 		Contacts: &contact.Service{}, Suppression: &suppression.Service{}, Campaigns: &campaign.Service{}, Sequences: &sequence.Service{},
 		Aliases: &alias.Service{}, Inbound: &inbound.Service{}, OTP: &otp.Service{}, SMS: &sms.Service{}, Webhooks: &webhook.Service{},
-		Stats: &stats.Service{}, Admin: &admin.Service{}, Delivery: &delivery.Service{}}
+		Stats: &stats.Service{}, Admin: &admin.Service{}, Delivery: &delivery.Service{}, Billing: &billing.Service{}}
 	mux := http.NewServeMux()
 	a.routes(mux)
-	for pattern := range adminOnly {
+	patterns := map[string]bool{}
+	for p := range adminOnly {
+		patterns[p] = true
+	}
+	for p := range needsActivePlan {
+		patterns[p] = true
+	}
+	for pattern := range patterns {
 		method, path, _ := strings.Cut(pattern, " ")
 		path = strings.NewReplacer("{id}", "x", "{value}", "x").Replace(path)
 		if _, got := mux.Handler(httptest.NewRequest(method, path, nil)); got != pattern {
-			t.Errorf("adminOnly lists %q but the request is routed to %q", pattern, got)
+			t.Errorf("policy lists %q but the request is routed to %q", pattern, got)
 		}
 	}
 }

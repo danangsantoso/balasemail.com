@@ -7,34 +7,35 @@ package admin
 import (
 	"context"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/danangsantoso/balasemail.com/internal/billing"
 	"github.com/danangsantoso/balasemail.com/internal/platform/apperr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/database"
 	"github.com/danangsantoso/balasemail.com/internal/platform/httpx"
 	"github.com/danangsantoso/balasemail.com/internal/stats"
 )
 
-var Plans = []string{"starter", "growth", "business", "enterprise"}
-
 type Tenant struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	Plan           string    `json:"plan"`
-	Status         string    `json:"status"`
-	DailySendLimit int       `json:"daily_send_limit"`
-	SMSCredits     int       `json:"sms_credits"`
-	AdminEmail     string    `json:"admin_email"`
-	Users          int       `json:"users"`
-	Contacts       int       `json:"contacts"`
-	Sent30d        int       `json:"sent_30d"`
-	Bounced30d     int       `json:"bounced_30d"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	Plan           string     `json:"plan"`
+	Status         string     `json:"status"`
+	DailySendLimit int        `json:"daily_send_limit"`
+	SMSCredits     int        `json:"sms_credits"`
+	AdminEmail     string     `json:"admin_email"`
+	Users          int        `json:"users"`
+	Contacts       int        `json:"contacts"`
+	Sent30d        int        `json:"sent_30d"`
+	Bounced30d     int        `json:"bounced_30d"`
+	PlanEndsAt     *time.Time `json:"plan_ends_at"`
+	RequestedPlan  string     `json:"requested_plan,omitempty"`
+	RequestedCycle string     `json:"requested_cycle,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type TenantPatch struct {
@@ -42,6 +43,9 @@ type TenantPatch struct {
 	Plan           *string `json:"plan"`
 	DailySendLimit *int    `json:"daily_send_limit"`
 	AddSMSCredits  *int    `json:"add_sms_credits"`
+	// Months is the paid period: with Plan it starts a new period, on its own
+	// it extends the current one. Defaults to 1 when a plan is set.
+	Months *int `json:"months"`
 }
 
 type DayCount struct {
@@ -76,7 +80,7 @@ const tenantSelect = `
 	       coalesce((SELECT u.email FROM users u WHERE u.workspace_id=w.id AND u.role='admin' ORDER BY u.created_at LIMIT 1), ''),
 	       (SELECT count(*) FROM users u WHERE u.workspace_id=w.id),
 	       (SELECT count(*) FROM contacts c WHERE c.workspace_id=w.id),
-	       coalesce(s.sent, 0), coalesce(s.bounced, 0), w.created_at
+	       coalesce(s.sent, 0), coalesce(s.bounced, 0), w.plan_ends_at, w.requested_plan, w.requested_cycle, w.created_at
 	FROM workspaces w
 	LEFT JOIN (
 		SELECT workspace_id, count(*) FILTER (WHERE status IN ('sent','bounced')) AS sent, count(*) FILTER (WHERE status='bounced') AS bounced
@@ -86,7 +90,7 @@ const tenantSelect = `
 func scanTenant(r pgx.Row) (Tenant, error) {
 	var t Tenant
 	err := r.Scan(&t.ID, &t.Name, &t.Plan, &t.Status, &t.DailySendLimit, &t.SMSCredits, &t.AdminEmail, &t.Users, &t.Contacts,
-		&t.Sent30d, &t.Bounced30d, &t.CreatedAt)
+		&t.Sent30d, &t.Bounced30d, &t.PlanEndsAt, &t.RequestedPlan, &t.RequestedCycle, &t.CreatedAt)
 	return t, err
 }
 
@@ -107,8 +111,15 @@ func (s *Service) UpdateTenant(ctx context.Context, id string, in TenantPatch) (
 	if in.Status != nil && *in.Status != "active" && *in.Status != "suspended" {
 		return Tenant{}, apperr.Invalid("invalid_status", "status must be active or suspended")
 	}
-	if in.Plan != nil && !slices.Contains(Plans, *in.Plan) {
-		return Tenant{}, apperr.Invalid("invalid_plan", "plan must be one of "+strings.Join(Plans, ", "))
+	var plan billing.Plan
+	if in.Plan != nil {
+		var ok bool
+		if plan, ok = billing.Get(*in.Plan); !ok {
+			return Tenant{}, apperr.Invalid("invalid_plan", "plan must be one of "+strings.Join(billing.Keys(), ", "))
+		}
+	}
+	if in.Months != nil && (*in.Months < 1 || *in.Months > 36) {
+		return Tenant{}, apperr.Invalid("invalid_months", "months must be between 1 and 36")
 	}
 	if in.DailySendLimit != nil && (*in.DailySendLimit < 0 || *in.DailySendLimit > 10_000_000) {
 		return Tenant{}, apperr.Invalid("invalid_limit", "daily_send_limit must be between 0 and 10,000,000")
@@ -116,11 +127,34 @@ func (s *Service) UpdateTenant(ctx context.Context, id string, in TenantPatch) (
 	if in.AddSMSCredits != nil && (*in.AddSMSCredits < -1_000_000 || *in.AddSMSCredits > 1_000_000) {
 		return Tenant{}, apperr.Invalid("invalid_credits", "add_sms_credits must be between -1,000,000 and 1,000,000")
 	}
+	// Changing the plan starts a fresh period with the plan's quota and
+	// settles any pending upgrade request; months alone extend the period
+	// from its end (or from now if it has already lapsed).
+	months := 0
+	if in.Months != nil {
+		months = *in.Months
+	}
+	limit := in.DailySendLimit
+	var ends *time.Time
+	if in.Plan != nil {
+		ends = plan.Period(time.Now(), months)
+		if limit == nil {
+			l := plan.SendLimit()
+			limit = &l
+		}
+	}
 	tag, err := s.db.Exec(ctx, `UPDATE workspaces SET
 			status = COALESCE($2, status), plan = COALESCE($3, plan),
 			daily_send_limit = COALESCE($4, daily_send_limit),
-			sms_credits = greatest(sms_credits + COALESCE($5, 0), 0)
-		WHERE id=$1`, id, in.Status, in.Plan, in.DailySendLimit, in.AddSMSCredits)
+			sms_credits = greatest(sms_credits + COALESCE($5, 0), 0),
+			plan_ends_at = CASE
+				WHEN $3::text IS NOT NULL THEN $6::timestamptz
+				WHEN $7 > 0 AND plan_ends_at IS NOT NULL THEN greatest(plan_ends_at, now()) + make_interval(months => $7)
+				ELSE plan_ends_at END,
+			requested_plan  = CASE WHEN $3::text IS NOT NULL THEN '' ELSE requested_plan END,
+			requested_cycle = CASE WHEN $3::text IS NOT NULL THEN '' ELSE requested_cycle END,
+			requested_at    = CASE WHEN $3::text IS NOT NULL THEN NULL ELSE requested_at END
+		WHERE id=$1`, id, in.Status, in.Plan, limit, in.AddSMSCredits, ends, months)
 	if err != nil {
 		return Tenant{}, apperr.Internal(err)
 	}

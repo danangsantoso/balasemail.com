@@ -16,6 +16,7 @@ import (
 	"github.com/danangsantoso/balasemail.com/internal/admin"
 	"github.com/danangsantoso/balasemail.com/internal/alias"
 	"github.com/danangsantoso/balasemail.com/internal/auth"
+	"github.com/danangsantoso/balasemail.com/internal/billing"
 	"github.com/danangsantoso/balasemail.com/internal/bounce"
 	"github.com/danangsantoso/balasemail.com/internal/campaign"
 	"github.com/danangsantoso/balasemail.com/internal/config"
@@ -67,6 +68,7 @@ type App struct {
 	Limiter     *ratelimit.Postgres
 	Stats       *stats.Service
 	Admin       *admin.Service
+	Billing     *billing.Service
 }
 
 // New connects to the database, applies migrations and builds every module.
@@ -123,6 +125,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	a.Inbound = inbound.NewService(db, a.Delivery, a.Suppression, a.Aliases, a.Domains, inbound.KeywordClassifier{})
 	a.Stats = stats.NewService(db)
 	a.Admin = admin.NewService(db)
+	a.Billing = billing.NewService(db)
 	a.OTP = otp.NewService(db, a.Delivery, a.authorizeSender, a.SMS, q, signer, cipher)
 	return a, nil
 }
@@ -203,8 +206,9 @@ func (a *App) routes(mux *http.ServeMux) {
 	a.Webhooks.Routes(mux, authed)
 	a.Stats.Routes(mux, authed)
 	a.Admin.Routes(mux, authed)
+	a.Billing.Routes(mux, authed)
 	a.Delivery.PublicRoutes(mux)
-	web.Routes(mux)
+	web.Routes(mux, web.Options{ContactEmail: a.Cfg.ContactEmail, ContactWhatsApp: a.Cfg.ContactWhatsApp})
 }
 
 // MetricsHandler serves Prometheus metrics (bind to an internal port).

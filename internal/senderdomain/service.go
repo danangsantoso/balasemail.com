@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/danangsantoso/balasemail.com/internal/billing"
 	"github.com/danangsantoso/balasemail.com/internal/emailaddr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/apperr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/database"
@@ -91,6 +92,9 @@ func (s *Service) Add(ctx context.Context, wsID, name string) (Domain, error) {
 	}
 	if emailaddr.IsFreeProvider(name) || emailaddr.IsDisposable(name) {
 		return Domain{}, apperr.Invalid("business_domain_required", "only domains you own can be used for sending")
+	}
+	if err := billing.CheckDomain(ctx, s.db, wsID); err != nil {
+		return Domain{}, err
 	}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/danangsantoso/balasemail.com/internal/billing"
 	"github.com/danangsantoso/balasemail.com/internal/emailaddr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/apperr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/database"
@@ -160,6 +161,9 @@ func (s *Service) Upsert(ctx context.Context, wsID string, in Input) (Contact, e
 	if err := normalizeInput(&in); err != nil {
 		return Contact{}, err
 	}
+	if err := billing.CheckContacts(ctx, s.db, wsID, []string{in.Email}); err != nil {
+		return Contact{}, err
+	}
 	var c Contact
 	var inserted bool
 	err := s.db.QueryRow(ctx, upsertSQL, upsertArgs(wsID, in)...).Scan(
@@ -256,6 +260,13 @@ func (s *Service) Import(ctx context.Context, wsID, filename string, r io.Reader
 	rep := ImportReport{Total: len(inputs) + len(rowErrs), Skipped: len(rowErrs), Errors: rowErrs, Format: format}
 	if len(rep.Errors) > 100 {
 		rep.Errors = rep.Errors[:100]
+	}
+	emails := make([]string, len(inputs))
+	for i, in := range inputs {
+		emails[i] = in.Email
+	}
+	if err := billing.CheckContacts(ctx, s.db, wsID, emails); err != nil {
+		return rep, err
 	}
 	for chunk := range slices.Chunk(inputs, 500) {
 		batch := &pgx.Batch{}

@@ -10,6 +10,7 @@ type Principal struct {
 	Role         string // tenant role: admin | user
 	PlatformRole string // "superadmin" for platform operators, otherwise empty
 	APIKeyID     string
+	PlanExpired  bool // the tenant's trial or paid period has ended
 }
 
 // Tenant roles and the platform role.

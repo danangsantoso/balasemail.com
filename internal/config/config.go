@@ -24,6 +24,9 @@ type Config struct {
 
 	// SuperAdminEmails are promoted to platform super admin when they sign in.
 	SuperAdminEmails []string
+	// ContactEmail and ContactWhatsApp are shown on the landing page.
+	ContactEmail    string
+	ContactWhatsApp string
 
 	// DevSkipDNSCheck treats sender-domain DNS checks as passing (ignored in production).
 	DevSkipDNSCheck bool
@@ -142,6 +145,8 @@ func Load() (Config, error) {
 	}
 
 	c.SuperAdminEmails = splitList(env("SUPERADMIN_EMAILS", ""))
+	c.ContactEmail = env("CONTACT_EMAIL", "sales@balasemail.com")
+	c.ContactWhatsApp = env("CONTACT_WHATSAPP", "")
 	c.AllowPrivateNetworks = envBool("OUTBOUND_ALLOW_PRIVATE", c.Env == "development")
 	c.DevSkipDNSCheck = c.Env != "production" && envBool("DEV_SKIP_DNS_CHECK", false)
 	var errs []error

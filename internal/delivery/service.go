@@ -152,7 +152,7 @@ func (s *Service) emit(ctx context.Context, ev Event) {
 func (s *Service) RemainingQuota(ctx context.Context, wsID string) (int, error) {
 	var limit, used int
 	err := s.db.QueryRow(ctx, `
-		SELECT w.daily_send_limit,
+		SELECT CASE WHEN w.plan_ends_at < now() THEN 0 ELSE w.daily_send_limit END,
 		       (SELECT count(*) FROM messages m WHERE m.workspace_id=w.id
 		          AND m.category IN ('marketing','sequence') AND m.queued_at >= date_trunc('day', now()))
 		FROM workspaces w WHERE w.id=$1`, wsID).Scan(&limit, &used)
@@ -283,6 +283,7 @@ type storedMessage struct {
 	Headers                                            map[string]string
 	Raw                                                []byte
 	MessageIDHeader, Status, WorkspaceStatus           string
+	PlanExpired                                        bool
 	QueuedAt                                           time.Time
 }
 
@@ -296,10 +297,10 @@ func (s *Service) HandleSend(ctx context.Context, job queue.Job) error {
 	err := s.db.QueryRow(ctx, `
 		SELECT m.id, m.workspace_id, m.category, coalesce(m.enrollment_id::text,''), coalesce(m.contact_id::text,''),
 		       m.from_email, m.from_name, m.reply_to, m.to_email, m.subject, m.html, m.text_body, m.in_reply_to, m.headers, m.raw,
-		       m.message_id_header, m.status, w.status, m.queued_at
+		       m.message_id_header, m.status, w.status, w.plan_ends_at IS NOT NULL AND w.plan_ends_at < now(), m.queued_at
 		FROM messages m JOIN workspaces w ON w.id=m.workspace_id WHERE m.id=$1`, p.MessageID).Scan(
 		&m.ID, &m.WorkspaceID, &m.Category, &m.EnrollmentID, &m.ContactID, &m.From, &m.FromName, &m.ReplyTo, &m.To,
-		&m.Subject, &m.HTML, &m.Text, &m.InReplyTo, &m.Headers, &m.Raw, &m.MessageIDHeader, &m.Status, &m.WorkspaceStatus, &m.QueuedAt)
+		&m.Subject, &m.HTML, &m.Text, &m.InReplyTo, &m.Headers, &m.Raw, &m.MessageIDHeader, &m.Status, &m.WorkspaceStatus, &m.PlanExpired, &m.QueuedAt)
 	if database.IsNoRows(err) {
 		return nil
 	}
@@ -311,6 +312,9 @@ func (s *Service) HandleSend(ctx context.Context, job queue.Job) error {
 	}
 	if m.WorkspaceStatus != "active" {
 		return s.fail(ctx, m, "workspace_suspended")
+	}
+	if m.PlanExpired {
+		return s.fail(ctx, m, "plan_expired")
 	}
 	if Category(m.Category) != CategoryOTP && Category(m.Category) != CategoryTransactional {
 		if reason, _ := s.supp.Check(ctx, m.WorkspaceID, m.To); reason != "" {

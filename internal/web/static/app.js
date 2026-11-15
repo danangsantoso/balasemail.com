@@ -40,6 +40,12 @@ const errorText = {
   weak_password: "Password minimal 10 karakter.",
   missing_fields: "Nama perusahaan dan nama lengkap wajib diisi.",
   email_taken: "Email ini sudah terdaftar. Silakan masuk.",
+  company_exists: "Perusahaan Anda sudah punya workspace. Minta admin menambahkan Anda lewat menu Tim.",
+  plan_expired: "Masa coba atau langganan sudah berakhir. Pilih paket di menu Paket & Tagihan untuk melanjutkan.",
+  plan_limit_users: "Jumlah pengguna sudah mencapai batas paket. Upgrade paket untuk menambah anggota.",
+  plan_limit_domains: "Jumlah domain pengirim sudah mencapai batas paket. Upgrade paket untuk menambah domain.",
+  plan_limit_contacts: "Jumlah kontak akan melebihi batas paket. Kurangi data atau upgrade paket.",
+  invalid_plan: "Pilih salah satu paket berbayar.",
   invalid_credentials: "Email atau password salah.",
   rate_limited: "Terlalu banyak percobaan. Coba lagi sebentar lagi.",
   invalid_domain: "Nama domain tidak valid.",
@@ -692,7 +698,82 @@ pages.team = async () => {
 };
 
 // ---------- platform console (super admin) ----------
-const PLANS = [["starter", "Starter"], ["growth", "Growth"], ["business", "Business"], ["enterprise", "Enterprise"]];
+const PLANS = [["trial", "Coba Gratis"], ["starter", "Starter"], ["growth", "Growth"], ["business", "Business"], ["enterprise", "Enterprise"]];
+const planName = (key) => (PLANS.find((p) => p[0] === key) || [0, key])[1];
+const rupiah = (n) => "Rp" + Charts.full(n);
+const dateOnly = (s) => s ? new Date(s).toLocaleDateString("id-ID", { dateStyle: "medium" }) : "—";
+const daysLeft = (s) => Math.ceil((new Date(s) - Date.now()) / 864e5);
+
+// planBanner tells the tenant when the trial or paid period ends (or has ended).
+function planBanner() {
+  const w = me.workspace;
+  if (!w.plan_ends_at || isSuper()) return null;
+  const left = daysLeft(w.plan_ends_at), trial = w.plan === "trial";
+  if (left > (trial ? 3 : 7)) return null;
+  const cta = h("a", { href: "#/billing" }, isAdmin() ? (trial ? "Pilih paket" : "Perpanjang") : "Lihat paket");
+  if (left <= 0) return h("div", { class: "plan-banner bad" },
+    h("span", {}, trial ? "Masa coba gratis sudah berakhir. Pengiriman email dihentikan sampai paket dipilih." : `Langganan ${planName(w.plan)} sudah berakhir. Pengiriman email dihentikan sampai diperpanjang.`), cta);
+  return h("div", { class: "plan-banner" },
+    h("span", {}, trial ? `Masa coba gratis: sisa ${left} hari, ${Charts.full(w.daily_send_limit)} email per hari.` : `Langganan ${planName(w.plan)} berakhir ${left} hari lagi (${dateOnly(w.plan_ends_at)}).`), cta);
+}
+
+// meter shows usage against a plan limit; -1 means the plan has no limit.
+function meter(label, used, limit) {
+  const open = limit < 0, pct = open ? 0 : Math.min(100, limit ? Math.round(used / limit * 100) : 100);
+  return h("div", { class: "meter" },
+    h("div", { class: "meter-top" }, h("span", {}, label), h("b", {}, open ? `${Charts.full(used)} · tanpa batas` : `${Charts.full(used)} / ${Charts.full(limit)}`)),
+    h("div", { class: "meter-track", role: "img", "aria-label": `${label}: ${used}${open ? "" : " dari " + limit}` },
+      h("div", { class: "meter-fill" + (pct >= 100 ? " full" : pct >= 80 ? " high" : ""), style: `width:${pct}%` })));
+}
+
+let billingCycle = "monthly";
+
+pages.billing = async () => {
+  const b = await api("GET", "/v1/billing");
+  const cur = b.plan.key, trial = cur === "trial";
+  const choose = (p) => (e) => run(e.target, async () => {
+    await api("POST", "/v1/billing/upgrade-request", { plan: p.key, cycle: billingCycle });
+    toast(`Permintaan paket ${p.name} terkirim`); route();
+  });
+  const status = b.expired
+    ? h("div", { class: "callout warn" }, trial ? "Masa coba gratis sudah berakhir. Pilih paket di bawah untuk melanjutkan pengiriman." : "Langganan sudah berakhir. Pilih paket di bawah untuk memperpanjang.")
+    : b.plan_ends_at
+      ? h("p", { class: "help" }, trial ? `Masa coba berakhir ${dateOnly(b.plan_ends_at)} (sisa ${b.days_left} hari).` : `Aktif sampai ${dateOnly(b.plan_ends_at)} (sisa ${b.days_left} hari).`)
+      : h("p", { class: "help" }, "Paket aktif tanpa tanggal berakhir.");
+  const cycle = h("div", { class: "seg" }, [["monthly", "Bulanan"], ["yearly", "Tahunan · hemat 2 bulan"]].map(([v, l]) =>
+    h("button", { type: "button", class: v === billingCycle ? "on" : "", onclick: () => { billingCycle = v; route(); } }, l)));
+  const cards = b.plans.filter((p) => p.key !== "trial").map((p) => {
+    const custom = p.price_monthly < 0, yearly = billingCycle === "yearly";
+    const quota = (n, unit) => n < 0 ? `${unit[0].toUpperCase()}${unit.slice(1)} sesuai kebutuhan` : `${Charts.full(n)} ${unit}`;
+    const action = p.key === cur && !b.expired ? h("span", { class: "badge ok" }, "Paket Anda saat ini")
+      : b.requested_plan === p.key ? h("span", { class: "badge info" }, "Menunggu aktivasi")
+      : !isAdmin() ? null
+      : h("button", { class: p.popular ? "primary" : "", onclick: choose(p) }, custom ? "Minta penawaran" : p.key === cur ? "Perpanjang" : `Pilih ${p.name}`);
+    return h("div", { class: "plan-card" + (p.popular ? " popular" : "") },
+      p.popular ? h("span", { class: "plan-tag" }, "Paling populer") : null,
+      h("h3", {}, p.name), h("p", { class: "help" }, p.tagline),
+      h("div", { class: "plan-price" }, custom ? h("b", {}, "Hubungi kami")
+        : [h("b", {}, rupiah(yearly ? p.price_yearly : p.price_monthly)), h("span", {}, yearly ? "/tahun" : "/bulan")]),
+      h("ul", {}, [quota(p.daily_emails, "email per hari"), quota(p.contacts, "kontak"), quota(p.users, "pengguna"), quota(p.domains, "domain pengirim")].map((x) => h("li", {}, x))),
+      action);
+  });
+  return page("Paket & Tagihan", "Paket workspace Anda, pemakaian kuota, dan pilihan upgrade.",
+    h("div", { class: "grid span-2-1" },
+      card("Paket saat ini",
+        h("div", { class: "row" }, h("b", { style: "font-size:20px" }, b.plan.name || cur), b.expired ? h("span", { class: "badge bad" }, "berakhir") : h("span", { class: "badge ok" }, "aktif")),
+        status,
+        b.requested_plan ? h("div", { class: "callout" }, `Permintaan paket ${planName(b.requested_plan)} (${b.requested_cycle === "yearly" ? "tahunan" : "bulanan"}) dikirim ${fmtDate(b.requested_at)}. Paket aktif setelah pembayaran dikonfirmasi.`) : null),
+      card("Pemakaian",
+        meter("Email hari ini", b.usage.emails_today, b.daily_send_limit),
+        meter("Kontak", b.usage.contacts, b.plan.contacts ?? -1),
+        meter("Pengguna", b.usage.users, b.plan.users ?? -1),
+        meter("Domain pengirim", b.usage.domains, b.plan.domains ?? -1))),
+    h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", {}, "Pilih paket"), cycle),
+      isAdmin() ? null : adminNote("memilih atau mengganti paket"),
+      h("div", { class: "plan-grid" }, cards),
+      h("p", { class: "help" }, "Semua paket mendapat semua fitur; yang berbeda hanya kuotanya. Setelah Anda memilih, paket diaktifkan begitu pembayaran dikonfirmasi.")));
+};
 let platformDays = 30;
 
 pages.platform = async () => {
@@ -728,9 +809,19 @@ function tenantTable(rows, editable) {
       if (!editable) return badge(t.plan);
       const sel = h("select", { style: "width:auto;padding:4px 8px" }, PLANS.map(([v, l]) => h("option", { value: v }, l)));
       sel.value = t.plan;
-      sel.addEventListener("change", () => run(sel, async () => { await api("PATCH", "/v1/admin/tenants/" + t.id, { plan: sel.value }); toast("Paket diperbarui"); }));
-      return sel;
+      sel.addEventListener("change", () => {
+        const body = { plan: sel.value };
+        if (sel.value !== "trial" && sel.value !== "enterprise") {
+          const m = prompt(`Aktifkan ${planName(sel.value)} untuk ${t.name} selama berapa bulan?`, t.requested_cycle === "yearly" ? "12" : "1");
+          if (m == null) { sel.value = t.plan; return; }
+          body.months = Number(m);
+        }
+        run(sel, async () => { await api("PATCH", "/v1/admin/tenants/" + t.id, body); toast("Paket diperbarui"); route(); }).then(() => { sel.value = t.plan; });
+      });
+      return [sel, t.requested_plan ? h("div", { class: "help" }, h("span", { class: "badge info" }, `minta ${planName(t.requested_plan)} · ${t.requested_cycle === "yearly" ? "tahunan" : "bulanan"}`)) : null];
     } },
+    { label: "Berakhir", render: (t) => !t.plan_ends_at ? "—" : [h("span", { style: "white-space:nowrap" }, dateOnly(t.plan_ends_at)),
+      daysLeft(t.plan_ends_at) <= 0 ? h("div", {}, h("span", { class: "badge bad" }, "berakhir")) : h("div", { class: "help" }, `sisa ${daysLeft(t.plan_ends_at)} hari`)] },
     { label: "Status", render: (t) => t.status === "active" ? h("span", { class: "badge ok" }, "aktif") : h("span", { class: "badge bad" }, "ditangguhkan") },
     { label: "Pengguna", render: (t) => Charts.full(t.users) },
     { label: "Kontak", render: (t) => Charts.full(t.contacts) },
@@ -749,6 +840,11 @@ function tenantTable(rows, editable) {
         if (v == null) return;
         run(e.target, async () => { await api("PATCH", "/v1/admin/tenants/" + t.id, { add_sms_credits: Number(v) }); toast("Kredit SMS diperbarui"); route(); });
       } }, "+ SMS"),
+      t.plan_ends_at && t.plan !== "trial" ? h("button", { class: "sm", style: "grid-column:1 / -1", onclick: (e) => {
+        const m = prompt(`Perpanjang ${planName(t.plan)} untuk ${t.name} berapa bulan?`, "1");
+        if (m == null) return;
+        run(e.target, async () => { await api("PATCH", "/v1/admin/tenants/" + t.id, { months: Number(m) }); toast("Masa aktif diperpanjang"); route(); });
+      } }, "Perpanjang") : null,
       h("button", { class: "sm " + (t.status === "active" ? "danger" : ""), style: "grid-column:1 / -1", onclick: (e) => {
         const next = t.status === "active" ? "suspended" : "active";
         if (next === "suspended" && !confirm(`Tangguhkan ${t.name}? Semua pengguna tenant ini tidak bisa masuk dan pengiriman berhenti.`)) return;
@@ -777,7 +873,11 @@ const brand = () => h("div", { class: "brand" },
 
 // ---------- auth screen ----------
 function authScreen() {
-  let mode = "login";
+  // The landing page links to #/daftar?paket=growth and #/masuk.
+  const [target, query] = location.hash.replace(/^#\/?/, "").split("?");
+  const wanted = new URLSearchParams(query || "").get("paket") || "";
+  let mode = target === "daftar" ? "register" : "login";
+  const enter = (token, next) => { store.token = token; if (location.hash !== next) location.hash = next; else route(); };
   const body = h("div");
   const title = h("h1");
   const draw = () => {
@@ -785,17 +885,22 @@ function authScreen() {
     body.replaceChildren(
       h("div", { class: "tabs" },
         h("button", { class: mode === "login" ? "on" : "", onclick: () => { mode = "login"; draw(); } }, "Masuk"),
-        h("button", { class: mode === "register" ? "on" : "", onclick: () => { mode = "register"; draw(); } }, "Daftar Gratis")),
+        h("button", { class: mode === "register" ? "on" : "", onclick: () => { mode = "register"; draw(); } }, "Coba Gratis")),
+      mode === "register" ? h("div", { class: "callout" }, "Gratis 3 hari, 30 email per hari, tanpa kartu kredit." + (wanted && wanted !== "trial" ? ` Paket ${planName(wanted)} bisa dipilih setelah akun dibuat.` : "")) : null,
       mode === "login"
         ? form([{ name: "email", label: "Email bisnis", type: "email", required: true }, { name: "password", label: "Password", type: "password", required: true }],
-          "Masuk", async (v) => { const s = await api("POST", "/v1/auth/login", v); store.token = s.token; route(); })
+          "Masuk", async (v) => { const s = await api("POST", "/v1/auth/login", v); enter(s.token, "#/overview"); })
         : form([
           { name: "company_name", label: "Nama perusahaan", required: true },
           { name: "full_name", label: "Nama lengkap", required: true },
           { name: "email", label: "Email bisnis", type: "email", required: true, help: "Gmail, Yahoo, Outlook, dan email sementara tidak diterima." },
           { name: "password", label: "Password (min. 10 karakter)", type: "password", required: true },
           { name: "postal_address", label: "Alamat kantor", help: "Ditampilkan di footer email marketing (wajib secara hukum)." },
-        ], "Buat akun", async (v) => { const s = await api("POST", "/v1/auth/register", v); store.token = s.token; toast("Akun dibuat"); route(); }));
+        ], "Mulai coba gratis", async (v) => {
+          const s = await api("POST", "/v1/auth/register", v);
+          toast("Akun dibuat. Masa coba gratis 3 hari sudah aktif.");
+          enter(s.token, wanted && wanted !== "trial" ? "#/billing" : "#/overview");
+        }));
   };
   draw();
   return h("div", { class: "auth" },
@@ -811,7 +916,8 @@ function authScreen() {
       h("div", { class: "foot" }, "© BalasEmail · Patuh UU PDP & standar anti-spam")),
     h("div", { class: "auth-form" }, h("div", { class: "card" },
       title,
-      h("p", { class: "sub", style: "margin:0" }, "Gunakan email perusahaan Anda."), body)));
+      h("p", { class: "sub", style: "margin:0" }, "Gunakan email perusahaan Anda."), body,
+      h("p", { class: "help", style: "margin-top:16px;text-align:center" }, h("a", { href: "/" }, "← Kembali ke beranda")))));
 }
 
 // ---------- shell & router ----------
@@ -821,7 +927,7 @@ const nav = [
   ["Prospek", [["finder", "Cari email", "🔎"], ["validate", "Validasi", "✅"], ["contacts", "Kontak", "👥"]]],
   ["Kirim", [["campaigns", "Kampanye", "📣"], ["sequences", "Sequence", "🔁"], ["otp", "OTP", "🔐"], ["sms", "SMS", "💬"]]],
   ["Terima", [["inbox", "Inbox & aturan", "📥"], ["aliases", "Alias", "🏷️"]]],
-  ["Workspace", [["domains", "Domain", "🌐"], ["team", "Tim", "🧑‍🤝‍🧑"], ["settings", "Pengaturan", "⚙️", "admin"]]],
+  ["Workspace", [["domains", "Domain", "🌐"], ["team", "Tim", "🧑‍🤝‍🧑"], ["billing", "Paket & Tagihan", "💳"], ["settings", "Pengaturan", "⚙️", "admin"]]],
   ["Platform", [["platform", "Konsol platform", "🛰️", "super"], ["tenants", "Tenant", "🏢", "super"]], "super"],
 ];
 const visible = (who) => !who || (who === "admin" && isAdmin()) || (who === "super" && isSuper());
@@ -833,7 +939,7 @@ async function route() {
   if (!store.token) { $app.replaceChildren(authScreen()); return; }
   const [name, id] = (location.hash.replace(/^#\/?/, "").split("?")[0] || "overview").split("/");
   try {
-    if (!me || name === "overview" || name === "" || name === "team") me = await api("GET", "/v1/me"); // fresh role, quota & credits
+    if (!me || name === "overview" || name === "" || name === "team" || name === "billing") me = await api("GET", "/v1/me"); // fresh role, quota & credits
   } catch (e) {
     if (store.token && seq === routeSeq) $app.replaceChildren(h("main", {}, card("Terjadi kesalahan", h("p", {}, e.message))));
     return;
@@ -853,12 +959,12 @@ async function route() {
       h("div", { class: "side-foot" },
         h("div", { class: "me-card" }, h("div", { class: "avatar" }, initials),
           h("div", {}, h("div", { class: "name" }, me.user.full_name || me.user.email), h("div", { class: "org" }, `${me.workspace.name} · ${roleLabel()}`))),
-        h("a", { href: "#", onclick: (e) => { e.preventDefault(); store.token = ""; me = null; route(); } }, "↩ Keluar"))),
+        h("a", { href: "#", onclick: (e) => { e.preventDefault(); store.token = ""; me = null; location.hash = "#/masuk"; route(); } }, "↩ Keluar"))),
     main));
   try {
     const content = [await pages[current](id)].flat();
     if (seq !== routeSeq) return;
-    main.replaceChildren(...content);
+    main.replaceChildren(...[current === "billing" ? null : planBanner(), ...content].filter(Boolean));
     Charts.mount(main);
   } catch (e) {
     if (!store.token || seq !== routeSeq) return;

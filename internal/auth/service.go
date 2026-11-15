@@ -4,12 +4,14 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/danangsantoso/balasemail.com/internal/billing"
 	"github.com/danangsantoso/balasemail.com/internal/emailaddr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/apperr"
 	"github.com/danangsantoso/balasemail.com/internal/platform/authctx"
@@ -20,14 +22,15 @@ import (
 const apiKeyPrefix = "bm_"
 
 type Workspace struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	Plan           string    `json:"plan"`
-	DailySendLimit int       `json:"daily_send_limit"`
-	SMSCredits     int       `json:"sms_credits"`
-	PostalAddress  string    `json:"postal_address"`
-	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	Plan           string     `json:"plan"`
+	DailySendLimit int        `json:"daily_send_limit"`
+	SMSCredits     int        `json:"sms_credits"`
+	PostalAddress  string     `json:"postal_address"`
+	Status         string     `json:"status"`
+	PlanEndsAt     *time.Time `json:"plan_ends_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type User struct {
@@ -120,9 +123,26 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (Session, erro
 	}
 	var u User
 	err = database.InTx(ctx, s.db, func(tx pgx.Tx) error {
+		// One workspace per company domain: colleagues join through the team
+		// page, which also keeps the free trial from being restarted.
+		var taken bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE split_part(email, '@', 2) = $1)`,
+			addr.Domain).Scan(&taken); err != nil {
+			return err
+		}
+		if taken {
+			return errCompanyExists
+		}
+		// Platform operators are not put on a trial clock.
+		plan, _ := billing.Get(billing.Trial)
+		if s.superAdmins[addr.String()] {
+			plan, _ = billing.Get(billing.Enterprise)
+		}
 		var wsID string
-		if err := tx.QueryRow(ctx, `INSERT INTO workspaces (name, postal_address) VALUES ($1,$2) RETURNING id`,
-			strings.TrimSpace(in.CompanyName), strings.TrimSpace(in.PostalAddress)).Scan(&wsID); err != nil {
+		if err := tx.QueryRow(ctx, `INSERT INTO workspaces (name, postal_address, plan, daily_send_limit, plan_ends_at)
+			VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+			strings.TrimSpace(in.CompanyName), strings.TrimSpace(in.PostalAddress),
+			plan.Key, plan.SendLimit(), plan.Period(time.Now(), 0)).Scan(&wsID); err != nil {
 			return err
 		}
 		return scanUser(tx.QueryRow(ctx, `
@@ -131,6 +151,9 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (Session, erro
 			RETURNING `+userCols,
 			wsID, addr.String(), strings.TrimSpace(in.FullName), hash), &u)
 	})
+	if errors.Is(err, errCompanyExists) {
+		return Session{}, apperr.Conflict("company_exists", "your company already has a workspace; ask its admin to add you to the team")
+	}
 	if database.IsUniqueViolation(err) {
 		return Session{}, apperr.Conflict("email_taken", "an account with this email already exists")
 	}
@@ -139,6 +162,8 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (Session, erro
 	}
 	return s.session(u)
 }
+
+var errCompanyExists = errors.New("company already registered")
 
 func (s *Service) Login(ctx context.Context, email, password string) (Session, error) {
 	norm, _ := emailaddr.Normalize(email)
@@ -184,9 +209,10 @@ func (s *Service) Authenticate(ctx context.Context, bearer string) (authctx.Prin
 	p := authctx.Principal{UserID: c.Subject, WorkspaceID: c.WorkspaceID}
 	var disabled bool
 	var wsStatus string
-	err = s.db.QueryRow(ctx, `SELECT u.role, u.platform_role, u.disabled_at IS NOT NULL, w.status
+	err = s.db.QueryRow(ctx, `SELECT u.role, u.platform_role, u.disabled_at IS NOT NULL, w.status,
+			w.plan_ends_at IS NOT NULL AND w.plan_ends_at < now()
 		FROM users u JOIN workspaces w ON w.id = u.workspace_id WHERE u.id=$1 AND u.workspace_id=$2`, c.Subject, c.WorkspaceID).
-		Scan(&p.Role, &p.PlatformRole, &disabled, &wsStatus)
+		Scan(&p.Role, &p.PlatformRole, &disabled, &wsStatus, &p.PlanExpired)
 	switch {
 	case database.IsNoRows(err):
 		return p, apperr.Unauthorized("invalid_token", "account no longer exists")
@@ -219,18 +245,22 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, key string) (authctx.P
 		return authctx.Principal{}, bad
 	}
 	_, _ = s.db.Exec(ctx, `UPDATE api_keys SET last_used_at=now() WHERE id=$1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')`, id)
-	return authctx.Principal{WorkspaceID: wsID, Role: authctx.RoleAdmin, APIKeyID: id}, s.checkActive(ctx, wsID)
+	p := authctx.Principal{WorkspaceID: wsID, Role: authctx.RoleAdmin, APIKeyID: id}
+	p.PlanExpired, err = s.checkActive(ctx, wsID)
+	return p, err
 }
 
-func (s *Service) checkActive(ctx context.Context, wsID string) error {
+// checkActive rejects suspended workspaces and reports whether the plan period has ended.
+func (s *Service) checkActive(ctx context.Context, wsID string) (expired bool, err error) {
 	var status string
-	if err := s.db.QueryRow(ctx, `SELECT status FROM workspaces WHERE id=$1`, wsID).Scan(&status); err != nil {
-		return apperr.Unauthorized("workspace_not_found", "workspace no longer exists")
+	if err := s.db.QueryRow(ctx, `SELECT status, plan_ends_at IS NOT NULL AND plan_ends_at < now() FROM workspaces WHERE id=$1`,
+		wsID).Scan(&status, &expired); err != nil {
+		return false, apperr.Unauthorized("workspace_not_found", "workspace no longer exists")
 	}
 	if status != "active" {
-		return apperr.Forbidden("workspace_suspended", "workspace is suspended; contact support")
+		return expired, apperr.Forbidden("workspace_suspended", "workspace is suspended; contact support")
 	}
-	return nil
+	return expired, nil
 }
 
 func (s *Service) Me(ctx context.Context, p authctx.Principal) (User, Workspace, error) {
@@ -248,9 +278,9 @@ func (s *Service) Me(ctx context.Context, p authctx.Principal) (User, Workspace,
 func (s *Service) Workspace(ctx context.Context, id string) (Workspace, error) {
 	var w Workspace
 	err := s.db.QueryRow(ctx, `
-		SELECT id, name, plan, daily_send_limit, sms_credits, postal_address, status, created_at
+		SELECT id, name, plan, daily_send_limit, sms_credits, postal_address, status, plan_ends_at, created_at
 		FROM workspaces WHERE id=$1`, id).
-		Scan(&w.ID, &w.Name, &w.Plan, &w.DailySendLimit, &w.SMSCredits, &w.PostalAddress, &w.Status, &w.CreatedAt)
+		Scan(&w.ID, &w.Name, &w.Plan, &w.DailySendLimit, &w.SMSCredits, &w.PostalAddress, &w.Status, &w.PlanEndsAt, &w.CreatedAt)
 	if database.IsNoRows(err) {
 		return w, apperr.NotFound("workspace_not_found", "workspace not found")
 	}
