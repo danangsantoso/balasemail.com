@@ -24,6 +24,7 @@ import (
 	"github.com/danangsantoso/balasemail.com/internal/delivery"
 	"github.com/danangsantoso/balasemail.com/internal/finder"
 	"github.com/danangsantoso/balasemail.com/internal/inbound"
+	"github.com/danangsantoso/balasemail.com/internal/listcheck"
 	"github.com/danangsantoso/balasemail.com/internal/mailer"
 	"github.com/danangsantoso/balasemail.com/internal/otp"
 	"github.com/danangsantoso/balasemail.com/internal/platform/database"
@@ -54,6 +55,7 @@ type App struct {
 	Domains     *senderdomain.Service
 	Validator   *validator.Validator
 	Finder      *finder.Service
+	Searches    *finder.SearchService
 	Contacts    *contact.Service
 	Suppression *suppression.Service
 	Delivery    *delivery.Service
@@ -69,6 +71,7 @@ type App struct {
 	Stats       *stats.Service
 	Admin       *admin.Service
 	Billing     *billing.Service
+	Lists       *listcheck.Service
 }
 
 // New connects to the database, applies migrations and builds every module.
@@ -107,6 +110,11 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		Client:    outbound,
 		UserAgent: cfg.Finder.UserAgent, MaxPages: cfg.Finder.MaxPages, Delay: 500 * time.Millisecond,
 	}, a.Validator, a.Suppression, a.Contacts)
+	// Overpass answers big areas slowly, so it gets its own, longer timeout.
+	a.Searches = finder.NewSearchService(db, q, &finder.Overpass{
+		Endpoint: cfg.Finder.OverpassURL, UserAgent: cfg.Finder.UserAgent,
+		Client: netguard.Client(100*time.Second, cfg.AllowPrivateNetworks),
+	}, a.Finder.SearchDomain, a.Contacts)
 
 	a.Limiter = ratelimit.NewPostgres(db)
 	verp := bounce.VERP{Signer: signer, Domain: cfg.SMTP.BounceDomain}
@@ -126,6 +134,18 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	a.Stats = stats.NewService(db)
 	a.Admin = admin.NewService(db)
 	a.Billing = billing.NewService(db)
+	a.Lists = listcheck.NewService(db, q, a.Validator)
+	a.Auth.SetResetMailer(auth.ResetMailer{BaseURL: cfg.PublicBaseURL, Send: func(ctx context.Context, m auth.Mail) error {
+		_, err := a.Delivery.Queue(ctx, db, delivery.Outgoing{
+			WorkspaceID: m.WorkspaceID, Category: delivery.CategoryTransactional,
+			FromEmail: cfg.SystemFrom, FromName: "BalasEmail", ToEmail: m.To,
+			Subject: m.Subject, HTML: m.HTML, Text: m.Text,
+		})
+		if errors.Is(err, delivery.ErrSuppressed) {
+			return nil // the address opted out of all mail; nothing to send
+		}
+		return err
+	}})
 	a.OTP = otp.NewService(db, a.Delivery, a.authorizeSender, a.SMS, q, signer, cipher)
 	return a, nil
 }
@@ -194,7 +214,9 @@ func (a *App) routes(mux *http.ServeMux) {
 	a.Auth.Routes(mux, authed)
 	a.Domains.Routes(mux, authed)
 	a.Validator.Routes(mux, authed)
+	a.Lists.Routes(mux, authed)
 	a.Finder.Routes(mux, authed)
+	a.Searches.Routes(mux, authed)
 	a.Contacts.Routes(mux, authed)
 	a.Suppression.Routes(mux, authed)
 	a.Campaigns.Routes(mux, authed)
@@ -222,6 +244,8 @@ func MetricsHandler() http.Handler {
 func (a *App) RegisterJobs(w *queue.Worker) {
 	w.Handle(delivery.JobSend, a.Delivery.HandleSend)
 	w.Handle(contact.JobValidate, a.Contacts.HandleValidateJob)
+	w.Handle(listcheck.JobRun, a.Lists.HandleRun)
+	w.Handle(finder.JobSearch, a.Searches.HandleJob)
 	w.Handle(sms.JobSend, a.SMS.HandleSend)
 	w.Handle(otp.JobFallback, a.OTP.HandleFallback)
 	w.Handle(sequence.JobWebhook, a.Sequences.HandleWebhook)

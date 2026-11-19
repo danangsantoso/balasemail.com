@@ -170,6 +170,17 @@ a.badge { text-decoration: none; }
 /* ---------- forms & buttons ---------- */
 form .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 form .full { grid-column: 1 / -1; }
+.pw { position: relative; }
+.pw input { padding-right: 44px; }
+.pw-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 36px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); }
+.pw-toggle:hover { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+.pw-toggle:active { transform: translateY(-50%); }
+.pw-toggle:focus-visible { outline: 2px solid var(--brand-2); outline-offset: 1px; }
+input[type=password]::-ms-reveal { display: none; }
+form .actions .forgot { margin-left: auto; align-self: center; font-size: 13px; font-weight: 600; }
+.auth-form .actions .forgot { display: inline-block; margin-top: 12px; }
+label.check { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; font-weight: 500; color: var(--text); margin: 2px 0 0; cursor: pointer; }
+label.check input { width: auto; margin-top: 3px; accent-color: var(--brand-2); }
 label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
 input, select, textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text); font: inherit; transition: border-color .15s, box-shadow .15s; }
 textarea { min-height: 110px; resize: vertical; }

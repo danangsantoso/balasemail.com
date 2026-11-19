@@ -527,3 +527,210 @@ func TestTrialAndPlans(t *testing.T) {
 	h.do("POST", "/v1/team", map[string]string{"email": "eko@coba.co.id", "full_name": "Eko", "password": "password-kuat-123"}, 201)
 	h.do("POST", "/v1/contacts", map[string]any{"email": "baru@klien.co.id"}, 200)
 }
+
+func TestPasswordReset(t *testing.T) {
+	h := setup(t)
+	oldTok := h.register("PT Lupa", "lina@lupa.co.id")
+	h.tok = ""
+
+	// Unknown addresses get the same answer, and no email.
+	h.do("POST", "/v1/auth/forgot-password", map[string]string{"email": "siapa@lupa.co.id"}, 202)
+	h.do("POST", "/v1/auth/forgot-password", map[string]string{"email": "lina@lupa.co.id"}, 202)
+	if n := h.scalar(`SELECT count(*)::text FROM messages WHERE category='transactional'`); n != "1" {
+		t.Fatalf("reset emails queued = %s, want 1", n)
+	}
+	body := h.scalar(`SELECT text_body FROM messages WHERE to_email='lina@lupa.co.id' AND category='transactional'`)
+	m := regexp.MustCompile(`/app#/reset\?token=([0-9a-f]{64})`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("reset link missing from email: %q", body)
+	}
+	if h.scalar(`SELECT count(*)::text FROM password_resets WHERE token_hash=$1`, m[1]) != "0" {
+		t.Fatal("the plain token must not be stored")
+	}
+
+	h.do("POST", "/v1/auth/reset-password", map[string]string{"token": m[1], "password": "pendek"}, 422)
+	h.do("POST", "/v1/auth/reset-password", map[string]string{"token": strings.Repeat("a", 64), "password": "password-baru-123"}, 422)
+	h.do("POST", "/v1/auth/reset-password", map[string]string{"token": m[1], "password": "password-baru-123"}, 204)
+	h.do("POST", "/v1/auth/reset-password", map[string]string{"token": m[1], "password": "password-lain-123"}, 422) // single use
+
+	// The old password and the old session stop working; the new password signs in.
+	h.do("POST", "/v1/auth/login", map[string]string{"email": "lina@lupa.co.id", "password": "password-kuat-123"}, 401)
+	h.tok = oldTok
+	h.do("GET", "/v1/me", nil, 401)
+	h.login("lina@lupa.co.id", "password-baru-123")
+	h.do("GET", "/v1/me", nil, 200)
+
+	// Expired links are refused, and requests are capped per hour.
+	h.tok = ""
+	h.do("POST", "/v1/auth/forgot-password", map[string]string{"email": "lina@lupa.co.id"}, 202)
+	h.sql(`UPDATE password_resets SET expires_at = now() - interval '1 minute' WHERE used_at IS NULL`)
+	body = h.scalar(`SELECT text_body FROM messages WHERE to_email='lina@lupa.co.id' AND category='transactional' ORDER BY queued_at DESC LIMIT 1`)
+	m = regexp.MustCompile(`token=([0-9a-f]{64})`).FindStringSubmatch(body)
+	h.do("POST", "/v1/auth/reset-password", map[string]string{"token": m[1], "password": "password-baru-456"}, 422)
+	h.do("POST", "/v1/auth/forgot-password", map[string]string{"email": "lina@lupa.co.id"}, 202)
+	h.do("POST", "/v1/auth/forgot-password", map[string]string{"email": "lina@lupa.co.id"}, 202) // fourth this hour: not sent
+	if n := h.scalar(`SELECT count(*)::text FROM password_resets`); n != "3" {
+		t.Fatalf("reset tokens = %s, want 3 (capped per hour)", n)
+	}
+}
+
+func (h *harness) upload(path, filename string, content []byte, want int) map[string]any {
+	h.t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", filename)
+	_, _ = fw.Write(content)
+	_ = mw.Close()
+	req, _ := http.NewRequest("POST", h.srv.URL+path, &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+h.tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != want {
+		h.t.Fatalf("upload %s = %d, want %d: %s", path, resp.StatusCode, want, raw)
+	}
+	out := map[string]any{}
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
+func (h *harness) download(path string) (http.Header, []byte) {
+	h.t.Helper()
+	req, _ := http.NewRequest("GET", h.srv.URL+path, nil)
+	req.Header.Set("Authorization", "Bearer "+h.tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		h.t.Fatalf("GET %s = %d: %s", path, resp.StatusCode, raw)
+	}
+	return resp.Header, raw
+}
+
+func TestValidationListImportExport(t *testing.T) {
+	h := setup(t)
+	h.register("PT Cek", "tari@cek.co.id")
+
+	sample, err := os.ReadFile("../web/static/contoh/validasi-contoh.xlsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := h.upload("/v1/validations/lists", "validasi-contoh.xlsx", sample, 202)
+	id := l["id"].(string)
+	if l["format"] != "xlsx" || l["total"].(float64) != 6 {
+		t.Fatalf("uploaded list = %v", l)
+	}
+	eventually(t, func() bool { return h.do("GET", "/v1/validations/lists/"+id, nil, 200)["status"] == "done" })
+	got := h.do("GET", "/v1/validations/lists/"+id, nil, 200)
+	counts := got["counts"].(map[string]any)
+	if got["processed"].(float64) != 6 || counts["pending"].(float64) != 0 || counts["disposable"].(float64) != 1 || counts["invalid"].(float64) < 1 {
+		t.Fatalf("finished list = %v", got)
+	}
+
+	// Exports: CSV with explanations, Excel that opens as a workbook, TXT of addresses only.
+	hdr, body := h.download("/v1/validations/lists/" + id + "/export?format=csv")
+	if !strings.Contains(hdr.Get("Content-Disposition"), `hasil-validasi-validasi-contoh-all.csv`) ||
+		!strings.Contains(string(body), "alamat-salah@,Format,Salah,,Tidak valid,Format alamat salah") ||
+		!strings.Contains(string(body), "coba@mailinator.com,Coba,Sementara,,Sementara,Email sementara") {
+		t.Fatalf("csv export %q:\n%s", hdr.Get("Content-Disposition"), body)
+	}
+	_, body = h.download("/v1/validations/lists/" + id + "/export?format=xlsx")
+	if !bytes.HasPrefix(body, []byte("PK\x03\x04")) {
+		t.Fatal("xlsx export is not a zip workbook")
+	}
+	// The example.* domains publish a null MX, so only the filter's own rows are certain here.
+	_, body = h.download("/v1/validations/lists/" + id + "/export?format=txt&filter=invalid")
+	if lines := strings.Fields(string(body)); !slices.Contains(lines, "coba@mailinator.com") || !slices.Contains(lines, "alamat-salah@") {
+		t.Fatalf("invalid-only txt export = %q", body)
+	}
+	_, body = h.download("/v1/validations/lists/" + id + "/export?format=txt&filter=deliverable")
+	if lines := strings.Fields(string(body)); slices.Contains(lines, "coba@mailinator.com") || slices.Contains(lines, "alamat-salah@") {
+		t.Fatalf("deliverable txt export = %q", body)
+	}
+	h.do("GET", "/v1/validations/lists/"+id+"/export?format=pdf", nil, 422)
+
+	// The exported CSV can be uploaded again (round trip), and TXT works too.
+	_, csvBody := h.download("/v1/validations/lists/" + id + "/export?format=csv")
+	if again := h.upload("/v1/validations/lists", "hasil.csv", csvBody, 202); again["total"].(float64) != 6 {
+		t.Fatalf("re-uploaded export = %v", again)
+	}
+	if txt := h.upload("/v1/validations/lists", "daftar.txt", []byte("a@cek.co.id\nb@cek.co.id\na@cek.co.id\n"), 202); txt["total"].(float64) != 2 || txt["skipped"].(float64) != 1 {
+		t.Fatalf("txt list = %v", txt)
+	}
+	if ls := h.do("GET", "/v1/validations/lists", nil, 200)["data"].([]any); len(ls) != 3 {
+		t.Fatalf("lists = %d, want 3", len(ls))
+	}
+
+	// Lists are private to the workspace.
+	h.register("PT Lain", "uli@lain.co.id")
+	h.do("GET", "/v1/validations/lists/"+id, nil, 404)
+	h.do("DELETE", "/v1/validations/lists/"+id, nil, 404)
+}
+
+func TestRegionCategorySearch(t *testing.T) {
+	var query string
+	osm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		query = r.Form.Get("data")
+		_, _ = w.Write([]byte(`{"elements":[
+			{"type":"node","id":11,"tags":{"name":"PT Hukum Sejahtera","office":"lawyer","email":"kantor@hukumsejahtera.co.id","addr:city":"Surabaya","phone":"031-555"}},
+			{"type":"node","id":12,"tags":{"name":"Notaris Ani","office":"notary","website":"https://instagram.com/notarisani","email":"notaris.ani@gmail.com"}},
+			{"type":"way","id":13,"tags":{"name":"Kantor Advokat Budi","office":"lawyer","website":"http://advokat-budi.test"}}
+		]}`))
+	}))
+	defer osm.Close()
+	t.Setenv("OVERPASS_URL", osm.URL)
+	h := setup(t)
+	h.register("PT Cari", "rina@cari.co.id")
+
+	h.do("POST", "/v1/finder/searches", map[string]any{"region": `Surabaya"];out;`, "category": "hukum"}, 422)
+	h.do("POST", "/v1/finder/searches", map[string]any{"region": "Surabaya", "category": "kapal_selam"}, 422)
+	cats := h.do("GET", "/v1/finder/categories", nil, 200)
+	if len(cats["categories"].([]any)) < 20 || len(cats["regions"].([]any)) < 20 {
+		t.Fatalf("catalog = %v", cats)
+	}
+
+	s := h.do("POST", "/v1/finder/searches", map[string]any{"region": "Surabaya", "category": "hukum", "limit": 10,
+		"save_contacts": true, "tags": []string{"hukum-sby"}}, 202)
+	id := s["id"].(string)
+	eventually(t, func() bool { return h.do("GET", "/v1/finder/searches/"+id, nil, 200)["status"] == "done" })
+	got := h.do("GET", "/v1/finder/searches/"+id, nil, 200)
+	if !strings.Contains(query, `["office"="lawyer"]`) || !strings.Contains(query, "Surabaya$") {
+		t.Fatalf("overpass query = %s", query)
+	}
+	if got["places_found"].(float64) != 3 || got["places_with_email"].(float64) != 2 || got["emails"].(float64) != 2 ||
+		got["saved"].(float64) != 2 || got["websites_pending"].(float64) != 0 {
+		t.Fatalf("search = %v", got)
+	}
+	first := got["places"].([]any)[0].(map[string]any)
+	if first["name"] != "PT Hukum Sejahtera" || first["source_url"] != "https://www.openstreetmap.org/node/11" {
+		t.Fatalf("places with an email come first: %v", first)
+	}
+
+	// Saved contacts carry the company, city and category, under the chosen tag.
+	cs := h.do("GET", "/v1/contacts?tag=hukum-sby", nil, 200)["data"].([]any)
+	if len(cs) != 2 {
+		t.Fatalf("saved contacts = %v", cs)
+	}
+	c := cs[0].(map[string]any)
+	if c["source"] != "finder" || c["company"] == "" || c["fields"].(map[string]any)["kategori"] != "Kantor hukum & notaris" {
+		t.Fatalf("contact = %v", c)
+	}
+
+	_, body := h.download("/v1/finder/searches/" + id + "/export?format=csv")
+	if !strings.Contains(string(body), "kantor@hukumsejahtera.co.id,PT Hukum Sejahtera,Kantor hukum & notaris,,Surabaya,031-555") {
+		t.Fatalf("export:\n%s", body)
+	}
+	if ls := h.do("GET", "/v1/finder/searches", nil, 200)["data"].([]any); len(ls) != 1 {
+		t.Fatalf("searches = %d", len(ls))
+	}
+	h.register("PT Lain", "oki@lain.co.id")
+	h.do("GET", "/v1/finder/searches/"+id, nil, 404)
+}

@@ -25,7 +25,9 @@ type Config struct {
 	// SuperAdminEmails are promoted to platform super admin when they sign in.
 	SuperAdminEmails []string
 	// ContactEmail and ContactWhatsApp are shown on the landing page.
-	ContactEmail    string
+	ContactEmail string
+	// SystemFrom sends account emails such as password resets; its domain should be verified for DKIM.
+	SystemFrom      string
 	ContactWhatsApp string
 
 	// DevSkipDNSCheck treats sender-domain DNS checks as passing (ignored in production).
@@ -85,9 +87,11 @@ type ValidatorConfig struct {
 }
 
 type FinderConfig struct {
-	UserAgent string
-	MaxPages  int
-	Timeout   time.Duration
+	// OverpassURL is the OpenStreetMap Overpass endpoint used for region + category searches.
+	OverpassURL string
+	UserAgent   string
+	MaxPages    int
+	Timeout     time.Duration
 }
 
 // Load reads the environment and validates required settings.
@@ -138,15 +142,17 @@ func Load() (Config, error) {
 			Timeout:   envDuration("VALIDATOR_TIMEOUT", 10*time.Second),
 		},
 		Finder: FinderConfig{
-			UserAgent: env("FINDER_USER_AGENT", "BalasEmailBot/1.0 (+https://balasemail.com/bot)"),
-			MaxPages:  envInt("FINDER_MAX_PAGES", 12),
-			Timeout:   envDuration("FINDER_TIMEOUT", 25*time.Second),
+			OverpassURL: env("OVERPASS_URL", "https://overpass-api.de/api/interpreter"),
+			UserAgent:   env("FINDER_USER_AGENT", "BalasEmailBot/1.0 (+https://balasemail.com/bot)"),
+			MaxPages:    envInt("FINDER_MAX_PAGES", 12),
+			Timeout:     envDuration("FINDER_TIMEOUT", 25*time.Second),
 		},
 	}
 
 	c.SuperAdminEmails = splitList(env("SUPERADMIN_EMAILS", ""))
 	c.ContactEmail = env("CONTACT_EMAIL", "sales@balasemail.com")
 	c.ContactWhatsApp = env("CONTACT_WHATSAPP", "")
+	c.SystemFrom = env("SYSTEM_EMAIL_FROM", "no-reply@balasemail.com")
 	c.AllowPrivateNetworks = envBool("OUTBOUND_ALLOW_PRIVATE", c.Env == "development")
 	c.DevSkipDNSCheck = c.Env != "production" && envBool("DEV_SKIP_DNS_CHECK", false)
 	var errs []error

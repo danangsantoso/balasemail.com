@@ -15,6 +15,7 @@ import (
 	"github.com/danangsantoso/balasemail.com/internal/delivery"
 	"github.com/danangsantoso/balasemail.com/internal/finder"
 	"github.com/danangsantoso/balasemail.com/internal/inbound"
+	"github.com/danangsantoso/balasemail.com/internal/listcheck"
 	"github.com/danangsantoso/balasemail.com/internal/otp"
 	"github.com/danangsantoso/balasemail.com/internal/senderdomain"
 	"github.com/danangsantoso/balasemail.com/internal/sequence"
@@ -96,7 +97,7 @@ func TestAdminOnlyPatternsExist(t *testing.T) {
 	a := &App{Auth: &auth.Service{}, Domains: &senderdomain.Service{}, Validator: &validator.Validator{}, Finder: &finder.Service{},
 		Contacts: &contact.Service{}, Suppression: &suppression.Service{}, Campaigns: &campaign.Service{}, Sequences: &sequence.Service{},
 		Aliases: &alias.Service{}, Inbound: &inbound.Service{}, OTP: &otp.Service{}, SMS: &sms.Service{}, Webhooks: &webhook.Service{},
-		Stats: &stats.Service{}, Admin: &admin.Service{}, Delivery: &delivery.Service{}, Billing: &billing.Service{}}
+		Stats: &stats.Service{}, Admin: &admin.Service{}, Delivery: &delivery.Service{}, Billing: &billing.Service{}, Lists: &listcheck.Service{}, Searches: &finder.SearchService{}}
 	mux := http.NewServeMux()
 	a.routes(mux)
 	patterns := map[string]bool{}

@@ -233,6 +233,11 @@ func (s *Service) RemoveTags(ctx context.Context, wsID, id string, tags []string
 type RowError struct {
 	Row   int    `json:"row"`
 	Error string `json:"error"`
+	// Email is the raw value of a row whose address is malformed, so callers
+	// such as list validation can report it rather than drop it.
+	Email string `json:"email,omitempty"`
+	// Contact holds the rest of that row (names, company).
+	Contact Input `json:"-"`
 }
 
 type ImportReport struct {

@@ -8,8 +8,8 @@ Status: ✅ selesai di repo · 🟡 sebagian · ⬜ belum
 
 | PRD | Sudah ada (bukti) | Belum ada |
 |---|---|---|
-| F1 Finder | ✅ crawler + robots.txt + obfuskasi + pola nama (`finder_test.go`) | ⬜ pencarian massal ≤1.000 domain sebagai job · ⬜ filter industri/lokasi (butuh sumber data) · ⬜ ekstensi browser |
-| F2 Validasi | ✅ 8 tahap + skor (`validator_test.go`), ✅ validasi massal di background | 🟡 probe SMTP butuh IP dengan port 25 terbuka · ⬜ dataset berlabel untuk mengukur akurasi ≥95% · ⬜ job refresh daftar disposable · ⬜ re-validasi otomatis 90 hari terjadwal |
+| F1 Finder | ✅ crawler + robots.txt + obfuskasi + pola nama (`finder_test.go`) · ✅ cari per wilayah & kategori bisnis dari OpenStreetMap + crawl website (`places_test.go`, `TestRegionCategorySearch`) | ⬜ pencarian massal ≤1.000 domain sebagai job · ⬜ sumber data bisnis berbayar (cakupan lebih luas dari OSM) · ⬜ ekstensi browser |
+| F2 Validasi | ✅ 8 tahap + skor (`validator_test.go`), ✅ validasi massal di background · ✅ impor Excel/CSV/TXT → ekspor Excel/CSV/TXT (`TestValidationListImportExport`) | 🟡 probe SMTP butuh IP dengan port 25 terbuka · ⬜ dataset berlabel untuk mengukur akurasi ≥95% · ⬜ job refresh daftar disposable · ⬜ re-validasi otomatis 90 hari terjadwal |
 | F3 Funnel | ✅ engine + validasi + window + A/B + auto-stop (`engine_test.go`, `TestSequenceStopsOnReply`) | ⬜ builder visual (frontend) · ⬜ pemilihan pemenang A/B otomatis (laporan per variant sudah ada) |
 | F4 OTP | ✅ send/verify/fallback SMS/rate limit (`otp_test.go`, `TestOTPFlow`) | ⬜ SDK JS/PHP/Python |
 | F5 Email bisnis | ✅ blokir free/disposable, TXT/SPF/DKIM/DMARC (`service_test.go`) · ✅ cek ulang DNS tiap 6 jam + alert | ⬜ notifikasi email ke pemilik saat DNS rusak · ⬜ KYC NIB/NPWP · ⬜ BIMI |

@@ -88,6 +88,11 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// Millisecond issue times let a password change end sessions issued moments
+// earlier without also rejecting the sign-in that follows it (RFC 7519 allows
+// fractional NumericDate values).
+func init() { jwt.TimePrecision = time.Millisecond }
+
 // JWTIssuer issues and parses HS256 session tokens.
 type JWTIssuer struct {
 	secret []byte

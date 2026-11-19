@@ -18,6 +18,7 @@ func (s *Service) Routes(mux *http.ServeMux, authed httpx.Middleware) {
 	mux.Handle("POST /v1/api-keys", authed(http.HandlerFunc(s.handleCreateKey)))
 	mux.Handle("DELETE /v1/api-keys/{id}", authed(http.HandlerFunc(s.handleRevokeKey)))
 	s.teamRoutes(mux, authed)
+	s.resetRoutes(mux)
 }
 
 func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {

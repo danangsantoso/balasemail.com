@@ -79,7 +79,11 @@ type Service struct {
 	jwt *security.JWTIssuer
 	// superAdmins are emails promoted to platform super admin on sign-in (SUPERADMIN_EMAILS).
 	superAdmins map[string]bool
+	reset       ResetMailer
 }
+
+// SetResetMailer wires how password reset emails are sent.
+func (s *Service) SetResetMailer(m ResetMailer) { s.reset = m }
 
 func NewService(db *pgxpool.Pool, jwt *security.JWTIssuer, superAdminEmails []string) *Service {
 	sa := map[string]bool{}
@@ -209,13 +213,21 @@ func (s *Service) Authenticate(ctx context.Context, bearer string) (authctx.Prin
 	p := authctx.Principal{UserID: c.Subject, WorkspaceID: c.WorkspaceID}
 	var disabled bool
 	var wsStatus string
+	var issued time.Time
+	if c.IssuedAt != nil {
+		issued = c.IssuedAt.Time
+	}
+	var stale bool
 	err = s.db.QueryRow(ctx, `SELECT u.role, u.platform_role, u.disabled_at IS NOT NULL, w.status,
-			w.plan_ends_at IS NOT NULL AND w.plan_ends_at < now()
-		FROM users u JOIN workspaces w ON w.id = u.workspace_id WHERE u.id=$1 AND u.workspace_id=$2`, c.Subject, c.WorkspaceID).
-		Scan(&p.Role, &p.PlatformRole, &disabled, &wsStatus, &p.PlanExpired)
+			w.plan_ends_at IS NOT NULL AND w.plan_ends_at < now(),
+			u.password_changed_at IS NOT NULL AND $3 < date_trunc('milliseconds', u.password_changed_at)
+		FROM users u JOIN workspaces w ON w.id = u.workspace_id WHERE u.id=$1 AND u.workspace_id=$2`, c.Subject, c.WorkspaceID, issued).
+		Scan(&p.Role, &p.PlatformRole, &disabled, &wsStatus, &p.PlanExpired, &stale)
 	switch {
 	case database.IsNoRows(err):
 		return p, apperr.Unauthorized("invalid_token", "account no longer exists")
+	case err == nil && stale:
+		return p, apperr.Unauthorized("invalid_token", "password was changed; sign in again")
 	case err != nil:
 		return p, apperr.Internal(err)
 	case disabled:

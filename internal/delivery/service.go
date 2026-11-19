@@ -313,7 +313,7 @@ func (s *Service) HandleSend(ctx context.Context, job queue.Job) error {
 	if m.WorkspaceStatus != "active" {
 		return s.fail(ctx, m, "workspace_suspended")
 	}
-	if m.PlanExpired {
+	if m.PlanExpired && Category(m.Category) != CategoryTransactional { // account mail (password reset) still goes out
 		return s.fail(ctx, m, "plan_expired")
 	}
 	if Category(m.Category) != CategoryOTP && Category(m.Category) != CategoryTransactional {

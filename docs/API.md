@@ -6,6 +6,8 @@ Semua endpoint `/v1/*`, kecuali register/login, membutuhkan `Authorization: Bear
 |---|---|---|
 | `POST /v1/auth/register` | F5 | Wajib email bisnis; membuat workspace (tenant) + admin dengan paket `trial` (3 hari, 30 email/hari). Satu domain perusahaan = satu workspace (`409 company_exists`) |
 | `POST /v1/auth/login` | | |
+| `POST /v1/auth/forgot-password` | | Publik: `{email}`. Selalu `202` (tidak membocorkan apakah akun ada). Tautan reset dikirim dari `SYSTEM_EMAIL_FROM`, berlaku 60 menit, sekali pakai, maks. 3 per jam per akun |
+| `POST /v1/auth/reset-password` | | Publik: `{token, password}` (min. 10 karakter). Semua sesi lama berakhir; `422 invalid_reset_token` bila tautan salah/kedaluwarsa |
 | `GET /v1/me` | | User (`role`, `platform_role`) + workspace (kuota, kredit SMS) |
 | `GET /v1/stats/overview?days=14` | | Seri harian terkirim/dibuka/diklik/dibalas (1–90 hari), total + periode sebelumnya, klasifikasi balasan, kualitas kontak |
 | `GET/POST /v1/team`, `PATCH /v1/team/{id}` | | Anggota workspace. Tambah/ubah hanya **admin**; `{role: admin\|user, disabled}`; admin aktif terakhir tidak bisa diturunkan |
@@ -19,8 +21,15 @@ Semua endpoint `/v1/*`, kecuali register/login, membutuhkan `Authorization: Bear
 | `POST /v1/domains/{id}/check` | F5 | Cek ulang TXT verifikasi, SPF, DKIM, DMARC |
 | `POST /v1/finder/domain` | F1 | `{domain, save_contacts, tags}` |
 | `POST /v1/finder/person` | F1 | `{first_name, last_name, domain}` |
+| `GET /v1/finder/categories` | F1 | Kategori bisnis dan saran wilayah untuk pencarian per wilayah |
+| `POST /v1/finder/searches` | F1 | `{region, category, limit ≤100, crawl_websites, save_contacts, tags}`; berjalan di background. Maks. 20 pencarian/hari per workspace |
+| `GET /v1/finder/searches`, `GET/DELETE /v1/finder/searches/{id}` | F1 | Status, ringkasan, dan daftar bisnis (yang punya email lebih dulu) |
+| `GET /v1/finder/searches/{id}/export?format=csv\|xlsx` | F1 | Satu baris per email: email, perusahaan, kategori, alamat, kota, telepon, website, sumber |
 | `POST /v1/validations` | F2 | Satu email, sinkron |
 | `POST /v1/validations/batch` | F2 | ≤100 email, sinkron |
+| `POST /v1/validations/lists` | F2 | multipart `file` (.xlsx, .csv, .txt), maks. 20.000 alamat; divalidasi di background |
+| `GET /v1/validations/lists`, `GET/DELETE /v1/validations/lists/{id}` | F2 | Progres dan jumlah per status |
+| `GET /v1/validations/lists/{id}/export?format=csv\|xlsx\|txt&filter=all\|valid\|deliverable\|invalid` | F2 | Hasil per baris dengan keterangan berbahasa Indonesia; TXT berisi alamat saja |
 | `GET/POST /v1/contacts`, `GET/DELETE /v1/contacts/{id}` | F7 | `DELETE ?suppress=true` = permintaan hapus data |
 | `POST /v1/contacts/import` | F7 | multipart `file` (.xlsx, .csv, .txt), `tags`. Lihat bagian "Impor kontak" |
 | `POST /v1/contacts/validate` | F2 | Validasi massal di background `{tag}` |
@@ -55,6 +64,24 @@ Setiap workspace adalah satu **tenant**; semua data (kontak, kampanye, inbox, do
 | `user` | Satu tenant | Pekerjaan harian: cari/validasi/impor kontak, kampanye, sequence, inbox, OTP, SMS |
 
 Endpoint yang ditolak mengembalikan `403 forbidden`. Peran dan status dibaca ulang dari database di setiap request, sehingga menurunkan peran/menonaktifkan user berlaku seketika. Tenant yang ditangguhkan mendapat `403 workspace_suspended`.
+
+## Validasi daftar dari file
+
+Format file sama dengan impor kontak; contohnya bisa diunduh di `/static/contoh/validasi-contoh.{xlsx,csv,txt}`.
+
+- Excel/CSV: baris pertama judul kolom dengan kolom `email`; `nama depan`, `nama belakang`, dan `perusahaan` ikut diekspor.
+- TXT: satu alamat per baris, atau `Nama <email>`. Baris yang diawali `#` diabaikan.
+- Alamat yang formatnya salah tetap masuk hasil sebagai `Tidak valid · Format alamat salah`; duplikat dilewati.
+- Kolom ekspor: email, nama depan, nama belakang, perusahaan, status, keterangan, skor, server mx, email sementara, alamat peran, email gratis, catch-all, dicek.
+- Filter `deliverable` = valid + berisiko (catch-all/alamat peran), cocok untuk daftar kirim.
+
+## Cari prospek per wilayah & kategori
+
+1. Daftar bisnis diambil dari OpenStreetMap lewat Overpass API (`OVERPASS_URL`): bisnis dengan kategori terpilih di dalam batas wilayah administratif (kota, kabupaten, atau provinsi) yang mencantumkan website atau email.
+2. Email yang tercantum di listing langsung diambil. Jika `crawl_websites` aktif, website resmi tiap bisnis dibuka dengan crawler yang sama dengan pencarian per domain (patuh robots.txt). Halaman media sosial, marketplace, dan layanan gratis dilewati.
+3. Jika `save_contacts` aktif, setiap email disimpan sebagai kontak dengan perusahaan, telepon, dan field `kota`, `kategori`, `alamat`, `website`; batas kontak paket tetap berlaku.
+
+Data bisnis © kontributor OpenStreetMap (ODbL). Server Overpass publik punya kebijakan pemakaian wajar; untuk volume besar jalankan Overpass sendiri dan arahkan `OVERPASS_URL` ke sana.
 
 ## Paket & masa coba
 

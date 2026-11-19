@@ -43,9 +43,11 @@ var needsActivePlan = map[string]bool{
 	"POST /v1/sms":                     true,
 	"POST /v1/finder/domain":           true,
 	"POST /v1/finder/person":           true,
+	"POST /v1/finder/searches":         true,
 	"POST /v1/validations":             true,
 	"POST /v1/validations/batch":       true,
 	"POST /v1/contacts/validate":       true,
+	"POST /v1/validations/lists":       true,
 }
 
 // Authorize is the role policy applied to every authenticated route.

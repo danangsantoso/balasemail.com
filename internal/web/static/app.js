@@ -46,6 +46,12 @@ const errorText = {
   plan_limit_domains: "Jumlah domain pengirim sudah mencapai batas paket. Upgrade paket untuk menambah domain.",
   plan_limit_contacts: "Jumlah kontak akan melebihi batas paket. Kurangi data atau upgrade paket.",
   invalid_plan: "Pilih salah satu paket berbayar.",
+  list_not_found: "Daftar validasi tidak ditemukan.",
+  invalid_region: "Tulis nama wilayah saja (kota, kabupaten, atau provinsi), tanpa simbol.",
+  invalid_category: "Pilih kategori bisnis dari daftar.",
+  search_limit: "Batas 20 pencarian wilayah per hari sudah tercapai. Coba lagi besok.",
+  search_not_found: "Pencarian tidak ditemukan.",
+  invalid_reset_token: "Tautan reset tidak valid atau sudah kedaluwarsa. Minta tautan baru.",
   invalid_credentials: "Email atau password salah.",
   rate_limited: "Terlalu banyak percobaan. Coba lagi sebentar lagi.",
   invalid_domain: "Nama domain tidak valid.",
@@ -69,7 +75,7 @@ const errorText = {
   invalid_xlsx: "File Excel tidak bisa dibaca. Pastikan formatnya .xlsx dan tidak dilindungi password.",
   empty_file: "File tidak berisi alamat email.",
   file_too_large: "Ukuran file maksimal 50MB.",
-  too_many_rows: "Maksimal 100.000 baris per impor. Bagi file menjadi beberapa bagian.",
+  too_many_rows: "Terlalu banyak baris dalam satu file (impor kontak maks. 100.000, validasi maks. 20.000). Bagi file menjadi beberapa bagian.",
   not_a_company_domain: "Pencarian hanya untuk domain perusahaan.",
   crawl_failed: "Website perusahaan tidak bisa diakses.",
   no_mx: "Domain ini tidak menerima email.",
@@ -77,6 +83,21 @@ const errorText = {
   workspace_suspended: "Workspace ditangguhkan karena reputasi pengiriman. Hubungi support.",
   invalid_url: "URL harus diawali https://",
 };
+
+// download fetches an authenticated file and hands it to the browser as a save.
+async function download(path) {
+  const res = await fetch(path, { headers: { Authorization: "Bearer " + store.token } });
+  if (!res.ok) {
+    let msg = "HTTP " + res.status;
+    try { const e = (await res.json()).error; msg = errorText[e.code] || e.message; } catch { /* not JSON */ }
+    throw new Error(msg);
+  }
+  const name = (/filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "") || [0, "hasil"])[1];
+  const url = URL.createObjectURL(await res.blob());
+  const a = h("a", { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
 
 async function api(method, path, body) {
   const opts = { method, headers: {} };
@@ -130,6 +151,30 @@ function table(cols, rows, emptyText) {
     h("tbody", {}, rows.map((r) => h("tr", {}, cols.map((c) => h("td", { class: c.mono ? "mono" : "" }, c.render ? c.render(r) : (r[c.key] ?? "—"))))))));
 }
 
+// eyeIcon draws the show/hide-password glyph (an eye, struck through when hidden text is visible).
+function eyeIcon(open) {
+  const ns = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs) => { const n = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n; };
+  const s = el("svg", { viewBox: "0 0 24 24", width: 18, height: 18, fill: "none", stroke: "currentColor", "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" });
+  s.append(el("path", { d: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" }), el("circle", { cx: 12, cy: 12, r: 3 }));
+  if (!open) s.append(el("path", { d: "M3 3l18 18" }));
+  return s;
+}
+
+// passwordInput wraps a password field with a button that shows or hides what was typed.
+function passwordInput(input) {
+  const btn = h("button", { type: "button", class: "pw-toggle", "aria-label": "Tampilkan password", title: "Tampilkan password", "aria-pressed": "false" }, eyeIcon(true));
+  btn.addEventListener("click", () => {
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    const label = show ? "Sembunyikan password" : "Tampilkan password";
+    btn.setAttribute("aria-label", label); btn.title = label; btn.setAttribute("aria-pressed", String(show));
+    btn.replaceChildren(eyeIcon(!show));
+    input.focus();
+  });
+  return h("div", { class: "pw" }, input, btn);
+}
+
 // form renders labelled fields and calls onSubmit with their values.
 function form(fields, submitLabel, onSubmit, extra) {
   const inputs = {};
@@ -138,16 +183,21 @@ function form(fields, submitLabel, onSubmit, extra) {
       let input;
       if (fd.type === "textarea") input = h("textarea", { name: fd.name, placeholder: fd.placeholder || "", class: fd.code ? "code" : "" });
       else if (fd.type === "select") input = h("select", { name: fd.name }, fd.options.map((o) => h("option", { value: o[0] }, o[1])));
-      else input = h("input", { name: fd.name, type: fd.type || "text", placeholder: fd.placeholder || "", required: fd.required, accept: fd.accept });
+      else input = h("input", { name: fd.name, type: fd.type || "text", placeholder: fd.placeholder || "", required: fd.required, accept: fd.accept,
+        autocomplete: fd.autocomplete, minlength: fd.minlength });
       if (fd.value != null && fd.type !== "file") input.value = fd.value;
       inputs[fd.name] = input;
-      return h("div", { class: fd.full ? "full" : "" }, h("label", {}, fd.label), input, fd.help ? h("div", { class: "help" }, fd.help) : null);
+      const id = "f-" + fd.name + "-" + Math.random().toString(36).slice(2, 8);
+      input.id = id;
+      return h("div", { class: fd.full ? "full" : "" }, h("label", { for: id }, fd.label),
+        fd.type === "password" ? passwordInput(input) : input, fd.help ? h("div", { class: "help" }, fd.help) : null);
     })),
     h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, submitLabel), extra || null));
   f.addEventListener("submit", (e) => {
     e.preventDefault();
     const vals = {};
-    for (const [k, el] of Object.entries(inputs)) vals[k] = el.type === "file" ? el.files[0] : el.value.trim();
+    // Passwords are taken as typed: leading or trailing spaces are part of them.
+    for (const [k, el] of Object.entries(inputs)) vals[k] = el.type === "file" ? el.files[0] : fields.find((fd) => fd.name === k).type === "password" ? el.value : el.value.trim();
     run(f.querySelector("button[type=submit]"), () => onSubmit(vals, f));
   });
   return f;
@@ -358,14 +408,108 @@ pages.contacts = async () => {
       ], list.data, "Belum ada kontak.")));
 };
 
-pages.finder = async () => {
+let finderCatalog = null;
+const SEARCH_STATUS = { queued: ["antre", "info"], searching: ["mencari bisnis", "warn"], crawling: ["membuka website", "warn"], done: ["selesai", "ok"], failed: ["gagal", "bad"] };
+const PLACE_NOTE = { website_unreachable: "website tidak bisa dibuka", no_email_on_website: "tidak ada email di website", platform_site: "halaman media sosial/marketplace" };
+const searchRunning = (s) => s.status !== "done" && s.status !== "failed";
+const searchStatus = (s) => { const [t, c] = SEARCH_STATUS[s.status] || [s.status, ""]; return h("span", { class: "badge " + c }, t); };
+const searchExport = (s, fmt) => (e) => run(e.target, () => download(`/v1/finder/searches/${s.id}/export?format=${fmt}`));
+
+// regionSearchForm picks a region (free text with suggestions) and a business category.
+function regionSearchForm(cat) {
+  const regionList = h("datalist", { id: "region-list" }, cat.regions.map((r) => h("option", { value: r })));
+  const groups = [...new Set(cat.categories.map((c) => c.group))];
+  const f = h("form", {},
+    h("div", { class: "fields" },
+      h("div", {}, h("label", { for: "rs-region" }, "Wilayah (kota, kabupaten, atau provinsi)"),
+        h("input", { id: "rs-region", name: "region", list: "region-list", placeholder: "Jakarta Selatan", required: true, autocomplete: "off" }), regionList),
+      h("div", {}, h("label", { for: "rs-category" }, "Kategori bisnis"),
+        h("select", { id: "rs-category", name: "category", required: true },
+          h("option", { value: "" }, "Pilih kategori…"),
+          groups.map((g) => h("optgroup", { label: g }, cat.categories.filter((c) => c.group === g).map((c) => h("option", { value: c.key }, c.label)))))),
+      h("div", {}, h("label", { for: "rs-limit" }, "Jumlah bisnis maksimal"),
+        h("input", { id: "rs-limit", name: "limit", type: "number", min: 1, max: 100, value: 30 })),
+      h("div", {}, h("label", { for: "rs-tags" }, "Simpan ke kontak dengan tag (opsional)"),
+        h("input", { id: "rs-tags", name: "tags", placeholder: "prospek-hukum-sby" })),
+      h("label", { class: "check full" }, h("input", { type: "checkbox", name: "crawl", checked: true }),
+        h("span", {}, "Buka website tiap bisnis untuk mencari email tambahan (lebih lama, mematuhi robots.txt)"))),
+    h("div", { class: "actions" }, h("button", { class: "primary", type: "submit" }, "Cari prospek")));
+  f.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = Object.fromEntries(new FormData(f));
+    run(f.querySelector("button[type=submit]"), async () => {
+      const tags = csv(v.tags);
+      const s = await api("POST", "/v1/finder/searches", { region: v.region.trim(), category: v.category, limit: Number(v.limit) || 30,
+        crawl_websites: !!v.crawl, save_contacts: tags.length > 0, tags });
+      toast(`Mencari ${s.category_label.toLowerCase()} di ${s.region}…`);
+      location.hash = "#/finder/" + s.id;
+    });
+  });
+  return f;
+}
+
+async function searchDetail(id) {
+  const s = await api("GET", "/v1/finder/searches/" + id);
+  clearTimeout(refreshTimer);
+  if (searchRunning(s)) refreshTimer = setTimeout(() => { if (location.hash === "#/finder/" + id) route(); }, 2500);
+  const progress = s.status === "crawling" && s.places_found
+    ? h("p", { class: "help" }, `Membuka website: ${s.places_found - s.websites_pending} dari ${s.places_found} bisnis selesai.`) : null;
+  return page(`${s.category_label} di ${s.region}`, "Bisnis dari OpenStreetMap; email dari listing bisnis dan website resminya.",
+    h("div", { class: "grid cols-4" },
+      statTile({ icon: "🏢", chip: "c1", label: "Bisnis ditemukan", value: Charts.full(s.places_found), hint: `maks. ${s.limit}` }),
+      statTile({ icon: "✉️", chip: "c2", label: "Punya email", value: Charts.full(s.places_with_email), hint: s.places_found ? Math.round(s.places_with_email / s.places_found * 100) + "% dari bisnis" : "—" }),
+      statTile({ icon: "📬", chip: "c3", label: "Alamat email", value: Charts.full(s.emails), hint: "unik per bisnis" }),
+      statTile({ icon: "👥", chip: "c4", label: "Disimpan ke kontak", value: Charts.full(s.saved), hint: s.save_contacts ? "tag: " + s.tags.join(", ") : "tidak disimpan" })),
+    card(null,
+      h("div", { class: "card-head" }, h("div", { class: "row" }, h("h2", {}, "Daftar bisnis"), searchStatus(s)),
+        h("div", { class: "row", style: "gap:6px" },
+          h("button", { class: "sm", disabled: searchRunning(s), onclick: searchExport(s, "xlsx") }, "Unduh Excel"),
+          h("button", { class: "sm", disabled: searchRunning(s), onclick: searchExport(s, "csv") }, "Unduh CSV"),
+          h("a", { href: "#/finder" }, "← Pencarian baru"))),
+      progress,
+      s.status === "failed" ? h("div", { class: "callout warn" }, "Sumber data bisnis sedang tidak bisa dihubungi. Coba lagi beberapa saat lagi.") : null,
+      table([
+        { label: "Bisnis", render: (p) => [h("b", {}, p.name), h("div", { class: "help" }, [p.address, p.city].filter(Boolean).join(" · ") || "—")] },
+        { label: "Email", render: (p) => p.emails.length ? p.emails.map((e) => h("div", { class: "mono" }, e))
+          : h("span", { class: "help" }, !p.crawled ? "menunggu…" : PLACE_NOTE[p.note] || "tidak ada email") },
+        { label: "Telepon", render: (p) => p.phone || "—" },
+        { label: "Website", render: (p) => p.website ? h("a", { href: p.website, target: "_blank", rel: "noopener noreferrer" }, p.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")) : "—" },
+        { label: "Sumber", render: (p) => h("a", { href: p.source_url, target: "_blank", rel: "noopener noreferrer" }, "OSM") },
+      ], s.places, searchRunning(s) ? "Sedang mencari bisnis…" : "Tidak ada bisnis dengan website atau email di wilayah ini. Coba wilayah yang lebih luas atau kategori lain."),
+      h("p", { class: "help", style: "margin-top:12px" }, "Data bisnis © kontributor OpenStreetMap (ODbL). Kirim email hanya untuk keperluan bisnis yang relevan dan sertakan cara berhenti berlangganan.")));
+}
+
+pages.finder = async (id) => {
+  if (id) return searchDetail(id);
+  finderCatalog = finderCatalog || await api("GET", "/v1/finder/categories");
+  const searches = (await api("GET", "/v1/finder/searches?limit=10")).data;
+  clearTimeout(refreshTimer);
+  if (searches.some(searchRunning)) refreshTimer = setTimeout(() => { if (location.hash.startsWith("#/finder")) route(); }, 3000);
   const out = h("div");
   const showResult = (rows) => out.replaceChildren(card("Hasil", table([
     { label: "Email", key: "email" }, { label: "Nama", render: (r) => [r.first_name, r.last_name].filter(Boolean).join(" ") || "—" },
     { label: "Metode", key: "method" }, { label: "Keyakinan", render: (r) => r.confidence + "%" },
     { label: "Sumber", render: (r) => r.source_url ? h("a", { href: r.source_url, target: "_blank", rel: "noopener noreferrer" }, "lihat") : "—" },
   ], rows, "Tidak ada email ditemukan.")));
-  return page("Cari email B2B", "Hanya dari halaman publik website perusahaan (patuh robots.txt) dan pola nama yang diverifikasi.",
+  return page("Cari email B2B", "Hanya dari data publik: listing bisnis OpenStreetMap, halaman website perusahaan (patuh robots.txt), dan pola nama yang diverifikasi.",
+    card("Berdasarkan wilayah & kategori bisnis", h("p", { class: "help", style: "margin:-6px 0 14px" },
+      "Contoh: semua kantor hukum di Surabaya atau pabrik di Bekasi. Hanya bisnis yang mencantumkan website atau email yang diambil."),
+      regionSearchForm(finderCatalog)),
+    searches.length ? card("Pencarian terakhir", table([
+      { label: "Pencarian", render: (s) => [h("a", { href: "#/finder/" + s.id }, h("b", {}, `${s.category_label} · ${s.region}`)), h("div", { class: "help" }, fmtDate(s.created_at))] },
+      { label: "Status", render: searchStatus },
+      { label: "Bisnis", render: (s) => Charts.full(s.places_found) },
+      { label: "Punya email", render: (s) => Charts.full(s.places_with_email) },
+      { label: "Email", render: (s) => Charts.full(s.emails) },
+      { label: "Disimpan", render: (s) => s.save_contacts ? Charts.full(s.saved) : "—" },
+      { label: "", render: (s) => h("div", { class: "row", style: "gap:6px;flex-wrap:nowrap" },
+        h("button", { class: "sm", onclick: () => { location.hash = "#/finder/" + s.id; } }, "Lihat"),
+        h("button", { class: "sm", disabled: searchRunning(s), onclick: searchExport(s, "xlsx") }, "Excel"),
+        h("button", { class: "sm danger", onclick: (e) => {
+          if (!confirm(`Hapus hasil pencarian ${s.category_label} di ${s.region}? Kontak yang sudah disimpan tetap ada.`)) return;
+          run(e.target, async () => { await api("DELETE", "/v1/finder/searches/" + s.id); route(); });
+        } }, "Hapus")) },
+    ], searches)) : null,
     h("div", { class: "grid cols-2" },
       card("Berdasarkan domain", form([
         { name: "domain", label: "Domain perusahaan", placeholder: "perusahaan.co.id", required: true, full: true },
@@ -381,16 +525,77 @@ pages.finder = async () => {
     out);
 };
 
+const REASON_TEXT = {
+  mailbox_exists: "Kotak surat aktif", mailbox_not_found: "Kotak surat tidak ditemukan", invalid_syntax: "Format alamat salah",
+  no_mx_record: "Domain tidak menerima email", dns_error: "Domain tidak bisa dicek (DNS)", disposable_domain: "Email sementara",
+  role_based: "Alamat peran (mis. info@, sales@)", catch_all_domain: "Domain menerima semua alamat",
+  smtp_unreachable: "Server email tidak bisa dihubungi", greylisted_or_temporary: "Server menolak sementara",
+  smtp_probe_disabled: "Domain valid; kotak surat tidak diperiksa",
+};
+const CHECK_TEXT = { syntax: "Format alamat benar", mx: "Domain punya server email (MX)", mx_host: "Server MX", disposable: "Email sementara",
+  role_based: "Alamat peran", free_provider: "Email gratis (Gmail, Yahoo, …)", catch_all: "Domain catch-all", smtp_checked: "Kotak surat diperiksa (SMTP)", smtp_code: "Kode SMTP" };
+const LIST_STATUS = { queued: ["antre", "info"], running: ["memproses", "warn"], done: ["selesai", "ok"], failed: ["gagal", "bad"] };
+let refreshTimer = null;
+
 pages.validate = async () => {
   const out = h("div");
-  return page("Validasi email", "Cek sintaks, MX, disposable, role-based, dan (jika aktif) probe SMTP.",
-    card("Cek satu email", form([{ name: "email", label: "Email", required: true, full: true }], "Validasi", async (v) => {
-      const r = await api("POST", "/v1/validations", { email: v.email });
-      out.replaceChildren(card("Hasil: " + r.email,
-        h("div", { class: "row", style: "margin-bottom:12px" }, badge(r.status), h("span", {}, "Alasan: " + r.reason), h("span", {}, "Skor: " + r.score)),
-        table([{ label: "Pemeriksaan", key: "k" }, { label: "Hasil", key: "v" }],
-          Object.entries(r.checks).map(([k, val]) => ({ k, v: String(val) })))));
-    })), out);
+  const lists = (await api("GET", "/v1/validations/lists?limit=20")).data;
+  // Keep progress moving while a list is being checked and this page is open.
+  clearTimeout(refreshTimer);
+  if (lists.some((l) => l.status === "queued" || l.status === "running"))
+    refreshTimer = setTimeout(() => { if (location.hash.startsWith("#/validate")) route(); }, 2500);
+
+  const exportBtns = (l) => {
+    const filter = h("select", { style: "width:auto;padding:4px 8px", "aria-label": "Baris yang diunduh" },
+      h("option", { value: "all" }, "Semua"), h("option", { value: "deliverable" }, "Bisa dikirimi"),
+      h("option", { value: "valid" }, "Valid saja"), h("option", { value: "invalid" }, "Tidak valid"));
+    const get = (fmt) => (e) => run(e.target, () => download(`/v1/validations/lists/${l.id}/export?format=${fmt}&filter=${filter.value}`));
+    return h("div", { class: "row", style: "gap:6px;flex-wrap:nowrap" }, filter,
+      h("button", { class: "sm", onclick: get("xlsx") }, "Excel"), h("button", { class: "sm", onclick: get("csv") }, "CSV"),
+      h("button", { class: "sm", onclick: get("txt") }, "TXT"),
+      h("button", { class: "sm danger", "aria-label": "Hapus daftar", title: "Hapus daftar", onclick: (e) => {
+        if (!confirm(`Hapus hasil validasi ${l.filename}?`)) return;
+        run(e.target, async () => { await api("DELETE", "/v1/validations/lists/" + l.id); toast("Daftar dihapus"); route(); });
+      } }, "Hapus"));
+  };
+  const progress = (l) => {
+    const pct = l.total ? Math.round(l.processed / l.total * 100) : 100;
+    return h("div", { class: "meter", style: "margin:0;min-width:150px" },
+      h("div", { class: "meter-top" }, h("span", {}, `${Charts.full(l.processed)} / ${Charts.full(l.total)}`), h("b", {}, pct + "%")),
+      h("div", { class: "meter-track" }, h("div", { class: "meter-fill", style: `width:${pct}%` })));
+  };
+  const count = (n, cls) => n ? h("span", { class: "badge " + cls }, Charts.full(n)) : h("span", { class: "help" }, "0");
+
+  return page("Validasi email", "Cek apakah alamat email aktif: sintaks, server email (MX), email sementara, alamat peran, dan (jika aktif) probe SMTP.",
+    h("div", { class: "grid cols-2" },
+      card("Validasi daftar dari file", form([
+        { name: "file", label: "File Excel (.xlsx), CSV, atau TXT", type: "file", accept: ".xlsx,.csv,.txt,.tsv,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", required: true, full: true,
+          help: "Excel/CSV: baris pertama berisi judul kolom, wajib ada kolom email (nama depan, nama belakang, perusahaan ikut diekspor). TXT: satu email per baris. Maksimal 20.000 alamat per file." },
+      ], "Unggah & validasi", async (v) => {
+        const fd = new FormData(); fd.append("file", v.file);
+        const l = await api("POST", "/v1/validations/lists", fd);
+        toast(`${Charts.full(l.total)} alamat dari ${l.filename} sedang divalidasi` + (l.skipped ? ` (${l.skipped} duplikat dilewati)` : "")); route();
+      }),
+        h("div", { class: "samples" }, h("span", { class: "help" }, "Unduh contoh format: "),
+          h("a", { href: "/static/contoh/validasi-contoh.xlsx", download: "validasi-contoh.xlsx" }, "Excel (.xlsx)"),
+          h("a", { href: "/static/contoh/validasi-contoh.csv", download: "validasi-contoh.csv" }, "CSV"),
+          h("a", { href: "/static/contoh/validasi-contoh.txt", download: "validasi-contoh.txt" }, "TXT"))),
+      card("Cek satu email", form([{ name: "email", label: "Email", required: true, full: true }], "Validasi", async (v) => {
+        const r = await api("POST", "/v1/validations", { email: v.email });
+        out.replaceChildren(h("div", { style: "margin-top:14px" },
+          h("div", { class: "row", style: "margin-bottom:12px" }, h("b", {}, r.email), badge(r.status), h("span", {}, REASON_TEXT[r.reason] || r.reason), h("span", { class: "help" }, "Skor " + r.score)),
+          table([{ label: "Pemeriksaan", key: "k" }, { label: "Hasil", key: "v" }],
+            Object.entries(r.checks).map(([k, val]) => ({ k: CHECK_TEXT[k] || k, v: val === true ? "ya" : val === false ? "tidak" : String(val) })))));
+      }), out)),
+    card("Hasil validasi daftar", table([
+      { label: "File", render: (l) => [h("b", {}, l.filename), h("div", { class: "help" }, `${l.format.toUpperCase()} · ${fmtDate(l.created_at)}`)] },
+      { label: "Status", render: (l) => { const [t, c] = LIST_STATUS[l.status] || [l.status, ""]; return h("span", { class: "badge " + c }, t); } },
+      { label: "Progres", render: progress },
+      { label: "Valid", render: (l) => count(l.counts.valid, "ok") },
+      { label: "Berisiko", render: (l) => count(l.counts.risky + l.counts.unknown, "warn") },
+      { label: "Tidak valid", render: (l) => count(l.counts.invalid + l.counts.disposable, "bad") },
+      { label: "Unduh hasil", render: exportBtns },
+    ], lists, "Belum ada daftar. Unggah file di atas untuk memvalidasi banyak email sekaligus.")));
 };
 
 const campaignTemplate = `<p>{Halo|Hai} {{first_name|"Bapak/Ibu"}},</p>
@@ -876,31 +1081,63 @@ function authScreen() {
   // The landing page links to #/daftar?paket=growth and #/masuk.
   const [target, query] = location.hash.replace(/^#\/?/, "").split("?");
   const wanted = new URLSearchParams(query || "").get("paket") || "";
-  let mode = target === "daftar" ? "register" : "login";
+  const resetToken = target === "reset" ? new URLSearchParams(query || "").get("token") || "" : "";
+  let mode = resetToken ? "reset" : target === "daftar" ? "register" : target === "lupa-password" ? "forgot" : "login";
+  let sentTo = "";
   const enter = (token, next) => { store.token = token; if (location.hash !== next) location.hash = next; else route(); };
   const body = h("div");
   const title = h("h1");
+  const sub = h("p", { class: "sub", style: "margin:0" });
   const draw = () => {
-    title.textContent = mode === "login" ? "Masuk ke workspace" : "Buat workspace baru";
-    body.replaceChildren(
+    title.textContent = { login: "Masuk ke workspace", register: "Buat workspace baru", forgot: "Lupa password", reset: "Buat password baru" }[mode];
+    sub.textContent = { login: "Gunakan email perusahaan Anda.", register: "Gunakan email perusahaan Anda.",
+      forgot: "Masukkan email akun Anda. Kami kirimkan tautan untuk membuat password baru.", reset: "Password minimal 10 karakter." }[mode];
+    sub.style.margin = mode === "forgot" || mode === "reset" ? "0 0 18px" : "0"; // the tabs give the other modes their spacing
+    if (mode === "forgot") {
+      body.replaceChildren(sentTo
+        ? h("div", {}, h("div", { class: "callout" }, `Jika ${sentTo} terdaftar, tautan untuk membuat password baru sudah dikirim. Periksa inbox atau folder spam; tautan berlaku 60 menit.`),
+          h("button", { type: "button", onclick: () => { sentTo = ""; draw(); } }, "Kirim ulang"))
+        : form([{ name: "email", label: "Email bisnis", type: "email", required: true, autocomplete: "email", full: true }], "Kirim tautan reset", async (v) => {
+          await api("POST", "/v1/auth/forgot-password", v); sentTo = v.email; draw();
+        }),
+        h("p", { class: "help", style: "margin-top:14px" }, h("a", { href: "#/masuk", onclick: () => { mode = "login"; } }, "← Kembali ke halaman masuk")));
+      return;
+    }
+    if (mode === "reset") {
+      body.replaceChildren(
+        form([
+          { name: "password", label: "Password baru", type: "password", required: true, autocomplete: "new-password", minlength: 10, full: true },
+          { name: "confirm", label: "Ulangi password baru", type: "password", required: true, autocomplete: "new-password", minlength: 10, full: true },
+        ], "Simpan password", async (v) => {
+          if (v.password !== v.confirm) throw new Error("Kedua password tidak sama.");
+          await api("POST", "/v1/auth/reset-password", { token: resetToken, password: v.password });
+          toast("Password diperbarui. Silakan masuk dengan password baru.");
+          mode = "login"; history.replaceState(null, "", "/app#/masuk"); draw();
+        }));
+      return;
+    }
+    // replaceChildren prints null as text, so the optional callout is filtered out.
+    body.replaceChildren(...[
       h("div", { class: "tabs" },
         h("button", { class: mode === "login" ? "on" : "", onclick: () => { mode = "login"; draw(); } }, "Masuk"),
         h("button", { class: mode === "register" ? "on" : "", onclick: () => { mode = "register"; draw(); } }, "Coba Gratis")),
       mode === "register" ? h("div", { class: "callout" }, "Gratis 3 hari, 30 email per hari, tanpa kartu kredit." + (wanted && wanted !== "trial" ? ` Paket ${planName(wanted)} bisa dipilih setelah akun dibuat.` : "")) : null,
       mode === "login"
-        ? form([{ name: "email", label: "Email bisnis", type: "email", required: true }, { name: "password", label: "Password", type: "password", required: true }],
-          "Masuk", async (v) => { const s = await api("POST", "/v1/auth/login", v); enter(s.token, "#/overview"); })
+        ? form([{ name: "email", label: "Email bisnis", type: "email", required: true, autocomplete: "email" },
+          { name: "password", label: "Password", type: "password", required: true, autocomplete: "current-password" }],
+          "Masuk", async (v) => { const s = await api("POST", "/v1/auth/login", v); enter(s.token, "#/overview"); },
+          h("a", { class: "forgot", href: "#/lupa-password", onclick: () => { mode = "forgot"; } }, "Lupa password?"))
         : form([
           { name: "company_name", label: "Nama perusahaan", required: true },
           { name: "full_name", label: "Nama lengkap", required: true },
           { name: "email", label: "Email bisnis", type: "email", required: true, help: "Gmail, Yahoo, Outlook, dan email sementara tidak diterima." },
-          { name: "password", label: "Password (min. 10 karakter)", type: "password", required: true },
+          { name: "password", label: "Password (min. 10 karakter)", type: "password", required: true, autocomplete: "new-password", minlength: 10 },
           { name: "postal_address", label: "Alamat kantor", help: "Ditampilkan di footer email marketing (wajib secara hukum)." },
         ], "Mulai coba gratis", async (v) => {
           const s = await api("POST", "/v1/auth/register", v);
           toast("Akun dibuat. Masa coba gratis 3 hari sudah aktif.");
           enter(s.token, wanted && wanted !== "trial" ? "#/billing" : "#/overview");
-        }));
+        })].filter(Boolean));
   };
   draw();
   return h("div", { class: "auth" },
@@ -915,8 +1152,7 @@ function authScreen() {
           h("li", {}, "Inbox terpadu dengan klasifikasi balasan, OTP, dan SMS gateway"))),
       h("div", { class: "foot" }, "© BalasEmail · Patuh UU PDP & standar anti-spam")),
     h("div", { class: "auth-form" }, h("div", { class: "card" },
-      title,
-      h("p", { class: "sub", style: "margin:0" }, "Gunakan email perusahaan Anda."), body,
+      title, sub, body,
       h("p", { class: "help", style: "margin-top:16px;text-align:center" }, h("a", { href: "/" }, "← Kembali ke beranda")))));
 }
 
@@ -936,7 +1172,8 @@ let routeSeq = 0;
 
 async function route() {
   const seq = ++routeSeq; // only the latest navigation may render
-  if (!store.token) { $app.replaceChildren(authScreen()); return; }
+  // A reset link works whether or not someone is signed in on this browser.
+  if (!store.token || location.hash.startsWith("#/reset")) { $app.replaceChildren(authScreen()); return; }
   const [name, id] = (location.hash.replace(/^#\/?/, "").split("?")[0] || "overview").split("/");
   try {
     if (!me || name === "overview" || name === "" || name === "team" || name === "billing") me = await api("GET", "/v1/me"); // fresh role, quota & credits

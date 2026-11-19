@@ -13,11 +13,11 @@ Platform email outreach & otomasi komunikasi B2B (Golang). Spesifikasi produk ad
 
 | Fitur PRD | Modul | Ringkasan |
 |---|---|---|
-| F1 Email finder | `internal/finder` | Crawler sopan (patuh robots.txt, rate limit, hanya domain perusahaan), ekstraksi email terobfuskasi, tebak pola nama dan verifikasi via SMTP |
-| F2 Validasi | `internal/validator` | Sintaks, MX/null-MX, disposable, role-based, free provider, probe RCPT, deteksi catch-all, skor 0–100 |
+| F1 Email finder | `internal/finder` | Cari prospek per wilayah & kategori bisnis (data OpenStreetMap, 32 kategori) lalu kunjungi website resminya; crawler sopan (patuh robots.txt, rate limit, hanya domain perusahaan), ekstraksi email terobfuskasi, tebak pola nama dan verifikasi via SMTP; ekspor Excel/CSV |
+| F2 Validasi | `internal/validator`, `internal/listcheck` | Sintaks, MX/null-MX, disposable, role-based, free provider, probe RCPT, deteksi catch-all, skor 0–100; validasi daftar dari Excel/CSV/TXT (maks. 20.000 alamat) di background, hasil diekspor ke Excel/CSV/TXT dengan contoh format yang bisa diunduh |
 | F3 Funnel multi-layer | `internal/sequence` | Graf DAG berisi node email/wait/condition/action, jumlah layer bisa diatur, A/B variant, jam kirim per zona waktu, auto-stop saat ada balasan/bounce/unsubscribe |
 | F4 OTP | `internal/otp` | Kode di-hash (HMAC, terikat ID), TTL, batas percobaan, rate limit, antrian prioritas, fallback ke SMS |
-| F5 Wajib email bisnis | `internal/auth`, `internal/senderdomain` | Tolak Gmail/Yahoo/disposable; verifikasi domain via TXT; cek SPF/DKIM/DMARC; kunci DKIM 2048-bit terenkripsi |
+| F5 Wajib email bisnis | `internal/auth`, `internal/senderdomain` | Lupa password lewat email (tautan sekali pakai 60 menit, sesi lama berakhir), tombol tampilkan password; tolak Gmail/Yahoo/disposable; verifikasi domain via TXT; cek SPF/DKIM/DMARC; kunci DKIM 2048-bit terenkripsi |
 | F6 SMTP Gateway | `internal/smtpgw`, `internal/mailer`, `internal/delivery` | Submission relay (AUTH memakai API key), MX inbound, DKIM signing, failover provider + circuit breaker, throttle per domain, bounce menjadi suppression |
 | F7 Mass email | `internal/campaign`, `internal/contact` | Import Excel (.xlsx), CSV, dan TXT dengan contoh file yang bisa diunduh, segmentasi tag, spintax + personalisasi, kuota harian, laju kirim, tracking open/klik, unsubscribe 1-klik (RFC 8058) |
 | F8 Alias unik | `internal/alias` | Generator pola `{first}.{division}`, bulk, auto-suffix saat bentrok, forward per alias |

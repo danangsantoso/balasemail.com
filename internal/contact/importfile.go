@@ -230,7 +230,7 @@ func fromTable(table [][]string, lines []int, defaultTags []string) ([]Input, []
 			}
 		}
 		if err := normalizeInput(&in); err != nil {
-			rowErrs = append(rowErrs, RowError{Row: line, Error: apperr.As(err).Message})
+			rowErrs = append(rowErrs, RowError{Row: line, Error: apperr.As(err).Message, Email: in.Email, Contact: in})
 			continue
 		}
 		if seen[in.Email] {
@@ -293,7 +293,7 @@ func addFree(inputs []Input, errs []RowError, seen map[string]bool, line int, em
 		}
 	}
 	if err := normalizeInput(&in); err != nil {
-		return inputs, append(errs, RowError{Row: line, Error: apperr.As(err).Message})
+		return inputs, append(errs, RowError{Row: line, Error: apperr.As(err).Message, Email: email, Contact: in})
 	}
 	if seen[in.Email] {
 		return inputs, append(errs, RowError{Row: line, Error: "duplicate email " + in.Email})
