@@ -1,0 +1,6 @@
+email,nama depan,nama belakang,perusahaan,jabatan,no hp,kota,industri,tags
+budi.santoso@example.com,Budi,Santoso,PT Maju Jaya,Direktur Utama,081234567890,Jakarta,Manufaktur,b2b;jakarta
+sari.wulandari@example.net,Sari,Wulandari,CV Sejahtera Abadi,Manajer Pembelian,081398765432,Bandung,Distribusi,b2b;bandung
+andi.pratama@example.org,Andi,Pratama,PT Nusantara Digital,CTO,085712345678,Surabaya,Teknologi,b2b;surabaya;vip
+dewi.lestari@example.com,Dewi,Lestari,PT Sinar Logistik,Head of Operations,082112223333,Semarang,Logistik,b2b
+rudi.hartono@example.net,Rudi,Hartono,PT Karya Konstruksi,Procurement Lead,087788990011,Medan,Konstruksi,b2b;medan

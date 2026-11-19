@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BalasEmail — Kirim email B2B, follow-up otomatis, dan balas lebih cepat</title>
+  <meta name="description" content="Platform outreach dan otomasi email B2B: cari dan validasi email perusahaan, kirim kampanye massal, follow-up otomatis, auto-reply, OTP, dan SMS. Coba gratis {{.Trial.TrialDays}} hari.">
+  <meta property="og:title" content="BalasEmail — Outreach & otomasi email B2B">
+  <meta property="og:description" content="Dari menemukan prospek sampai membalas otomatis, semua dari domain bisnis Anda sendiri. Coba gratis {{.Trial.TrialDays}} hari.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/brand/logo-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+  <meta name="theme-color" content="#4F46E5">
+  <link rel="stylesheet" href="/static/landing.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap bar">
+      <a class="brand" href="/" aria-label="BalasEmail">
+        <img src="/static/brand/logo-mark.svg" alt="" width="34" height="34">
+        <span>Balas<b>Email</b></span>
+      </a>
+      <nav class="links" aria-label="Navigasi utama">
+        <a href="#fitur">Fitur</a>
+        <a href="#cara-kerja">Cara kerja</a>
+        <a href="#harga">Harga</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="cta">
+        <a class="btn ghost" href="/app#/masuk" data-auth="login">Masuk</a>
+        <a class="btn primary" href="/app#/daftar" data-auth="register">Coba Gratis</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <span class="pill">Coba gratis {{.Trial.TrialDays}} hari · tanpa kartu kredit</span>
+          <h1>Kirim email B2B, follow-up otomatis, dan <em>balas lebih cepat</em>.</h1>
+          <p class="lead">Temukan prospek, validasi emailnya, kirim kampanye massal, dan biarkan follow-up berjalan sendiri sampai prospek membalas. Semua dari domain bisnis Anda sendiri.</p>
+          <div class="actions">
+            <a class="btn primary lg" href="/app#/daftar" data-auth="register">Coba Gratis {{.Trial.TrialDays}} Hari</a>
+            <a class="btn outline lg" href="#harga">Lihat harga</a>
+          </div>
+          <p class="note">{{.Trial.DailyEmails}} email per hari selama masa coba. Daftar dengan email perusahaan.</p>
+        </div>
+        <div class="shot">
+          <img src="/static/brand/dashboard.jpg" alt="Tampilan dashboard BalasEmail: ringkasan email terkirim, dibuka, diklik, dan dibalas" width="1440" height="900" loading="eager">
+        </div>
+      </div>
+    </section>
+
+    <section class="strip">
+      <div class="wrap strip-grid">
+        <div><b>Domain Anda sendiri</b><span>Email dikirim atas nama perusahaan Anda</span></div>
+        <div><b>SPF, DKIM, DMARC</b><span>Diperiksa otomatis agar tidak masuk spam</span></div>
+        <div><b>Berhenti saat dibalas</b><span>Follow-up tidak mengganggu prospek yang sudah merespons</span></div>
+        <div><b>Unsubscribe 1 klik</b><span>Daftar blokir dijaga otomatis</span></div>
+      </div>
+    </section>
+
+    <section id="fitur" class="section">
+      <div class="wrap">
+        <p class="eyebrow">Fitur</p>
+        <h2>Satu platform dari prospek sampai balasan</h2>
+        <p class="sub">Tidak perlu menyambung banyak alat. Semua langkah outreach ada di satu dashboard.</p>
+        <div class="cards">
+          <article><span class="ico">🔎</span><h3>Cari email perusahaan</h3><p>Temukan alamat email B2B dari domain perusahaan, lengkap dengan sumbernya.</p></article>
+          <article><span class="ico">✅</span><h3>Validasi email</h3><p>Cek email aktif atau tidak sebelum mengirim, supaya bounce rendah dan reputasi terjaga.</p></article>
+          <article><span class="ico">📣</span><h3>Email massal</h3><p>Kirim kampanye dengan personalisasi nama dan perusahaan, lalu pantau siapa yang membuka dan mengklik.</p></article>
+          <article><span class="ico">🔁</span><h3>Follow-up multi-layer</h3><p>Atur berapa lapis follow-up dan jedanya. Urutan berhenti otomatis saat prospek membalas.</p></article>
+          <article><span class="ico">📥</span><h3>Balas &amp; forward otomatis</h3><p>Balasan dikelompokkan otomatis (tertarik, menolak, cuti) lalu dibalas atau diteruskan ke tim sales.</p></article>
+          <article><span class="ico">🔐</span><h3>OTP lewat email bisnis</h3><p>Kirim kode OTP dari domain Anda lewat API, dengan cadangan SMS bila diperlukan.</p></article>
+          <article><span class="ico">📮</span><h3>SMTP gateway</h3><p>Hubungkan aplikasi atau CRM Anda lewat SMTP dan API key, dengan tanda tangan DKIM.</p></article>
+          <article><span class="ico">🏷️</span><h3>Alias email unik</h3><p>Buat format alamat per divisi atau per orang, misalnya sales.jakarta@perusahaan.co.id.</p></article>
+          <article><span class="ico">💬</span><h3>SMS lewat SMTP</h3><p>Kirim SMS cukup dengan mengirim email ke nomor tujuan, terhubung ke SMS gateway.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="cara-kerja" class="section alt">
+      <div class="wrap">
+        <p class="eyebrow">Cara kerja</p>
+        <h2>Mulai dalam empat langkah</h2>
+        <ol class="steps">
+          <li><span>1</span><h3>Daftar dengan email perusahaan</h3><p>Masa coba {{.Trial.TrialDays}} hari langsung aktif. Gmail, Yahoo, dan email sementara tidak diterima.</p></li>
+          <li><span>2</span><h3>Verifikasi domain</h3><p>Pasang catatan DNS yang kami tampilkan. SPF, DKIM, dan DMARC diperiksa otomatis.</p></li>
+          <li><span>3</span><h3>Siapkan daftar prospek</h3><p>Impor dari Excel, CSV, atau TXT, atau cari email dari domain perusahaan tujuan.</p></li>
+          <li><span>4</span><h3>Kirim dan biarkan berjalan</h3><p>Luncurkan kampanye atau sequence. Balasan masuk ke inbox terpadu dan ditangani otomatis.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="harga" class="section" data-cycle="monthly">
+      <div class="wrap">
+        <p class="eyebrow">Harga</p>
+        <h2>Paket sesuai ukuran tim Anda</h2>
+        <p class="sub">Semua paket mendapat semua fitur. Yang membedakan hanya kuotanya.</p>
+
+        <div class="trial">
+          <div>
+            <h3>{{.Trial.Name}} {{.Trial.TrialDays}} hari</h3>
+            <p>{{.Trial.DailyEmails}} email per hari, {{.Trial.Contacts}} kontak, {{.Trial.Users}} pengguna, {{.Trial.Domains}} domain pengirim. Tanpa kartu kredit.</p>
+          </div>
+          <a class="btn primary" href="/app#/daftar" data-auth="register">Mulai coba gratis</a>
+        </div>
+
+        <div class="cycle" role="group" aria-label="Periode tagihan">
+          <button type="button" data-set="monthly" class="on">Bulanan</button>
+          <button type="button" data-set="yearly">Tahunan <small>hemat 2 bulan</small></button>
+        </div>
+
+        <div class="plans">
+          {{range .Paid}}
+          <article class="plan{{if .Popular}} popular{{end}}">
+            {{if .Popular}}<span class="tag">Paling populer</span>{{end}}
+            <h3>{{.Name}}</h3>
+            <p class="tagline">{{.Tagline}}</p>
+            {{if gt .PriceMonthly 0}}
+            <p class="price m"><b>{{rupiah .PriceMonthly}}</b><span>/bulan</span></p>
+            <p class="price y"><b>{{rupiah .PriceYearly}}</b><span>/tahun</span></p>
+            {{else}}
+            <p class="price"><b>Hubungi kami</b></p>
+            {{end}}
+            <ul>{{range .Limits}}<li>{{.}}</li>{{end}}</ul>
+            {{if gt .PriceMonthly 0}}
+            <a class="btn {{if .Popular}}primary{{else}}outline{{end}}" href="/app#/daftar?paket={{.Key}}" data-auth="register" data-plan="{{.Key}}">Pilih {{.Name}}</a>
+            {{else}}
+            <a class="btn outline" href="{{$.ContactHref}}">Hubungi kami</a>
+            {{end}}
+          </article>
+          {{end}}
+        </div>
+        <p class="fine">Harga dalam rupiah. Setiap paket dimulai dengan masa coba gratis {{.Trial.TrialDays}} hari.</p>
+
+        <div class="included">
+          <h3>Semua paket termasuk</h3>
+          <ul>{{range .Included}}<li>{{.}}</li>{{end}}</ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq" class="section alt">
+      <div class="wrap narrow">
+        <p class="eyebrow">FAQ</p>
+        <h2>Pertanyaan yang sering ditanyakan</h2>
+        <details open>
+          <summary>Apa saja yang saya dapat selama masa coba gratis?</summary>
+          <p>Semua fitur selama {{.Trial.TrialDays}} hari, dengan batas {{.Trial.DailyEmails}} email per hari, {{.Trial.Contacts}} kontak, {{.Trial.Users}} pengguna, dan {{.Trial.Domains}} domain pengirim. Tidak perlu kartu kredit.</p>
+        </details>
+        <details>
+          <summary>Apa yang terjadi setelah masa coba berakhir?</summary>
+          <p>Pengiriman email, pencarian, dan validasi berhenti sampai Anda memilih paket. Data, kontak, dan pengaturan Anda tetap tersimpan dan masih bisa dibuka.</p>
+        </details>
+        <details>
+          <summary>Kenapa harus memakai email perusahaan?</summary>
+          <p>Email dikirim atas nama domain Anda sendiri agar dipercaya penerima dan lolos pemeriksaan SPF, DKIM, dan DMARC. Karena itu alamat Gmail, Yahoo, Outlook, dan email sementara tidak bisa dipakai untuk mendaftar.</p>
+        </details>
+        <details>
+          <summary>Bagaimana cara berlangganan atau pindah paket?</summary>
+          <p>Pilih paket dari menu Paket &amp; Tagihan di dashboard. Tim kami menghubungi Anda untuk pembayaran, lalu paket diaktifkan. Anda bisa pindah paket kapan saja dengan cara yang sama.</p>
+        </details>
+        <details>
+          <summary>Apakah satu perusahaan bisa punya banyak pengguna?</summary>
+          <p>Bisa. Setiap perusahaan punya satu workspace yang datanya terpisah dari perusahaan lain. Admin menambahkan anggota tim dari menu Tim, sesuai jumlah pengguna di paketnya.</p>
+        </details>
+        <details>
+          <summary>Apakah BalasEmail boleh dipakai untuk spam?</summary>
+          <p>Tidak. Setiap email marketing wajib memuat identitas pengirim dan tautan berhenti berlangganan, dan akun dengan tingkat bounce atau laporan spam tinggi ditangguhkan otomatis.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="wrap">
+        <h2>Mulai kirim email pertama Anda hari ini</h2>
+        <p>Coba gratis {{.Trial.TrialDays}} hari, {{.Trial.DailyEmails}} email per hari. Tanpa kartu kredit.</p>
+        <a class="btn white lg" href="/app#/daftar" data-auth="register">Coba Gratis {{.Trial.TrialDays}} Hari</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-grid">
+      <div>
+        <a class="brand" href="/"><img src="/static/brand/logo-mark.svg" alt="" width="30" height="30"><span>Balas<b>Email</b></span></a>
+        <p>Platform outreach &amp; otomasi email B2B.</p>
+      </div>
+      <nav aria-label="Produk">
+        <b>Produk</b>
+        <a href="#fitur">Fitur</a>
+        <a href="#harga">Harga</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <nav aria-label="Akun">
+        <b>Akun</b>
+        <a href="/app#/masuk">Masuk</a>
+        <a href="/app#/daftar">Daftar</a>
+      </nav>
+      <nav aria-label="Kontak">
+        <b>Kontak</b>
+        <a href="mailto:{{.ContactEmail}}">{{.ContactEmail}}</a>
+        {{if .WhatsAppHref}}<a href="{{.WhatsAppHref}}" rel="noopener">WhatsApp</a>{{end}}
+      </nav>
+    </div>
+    <div class="wrap copy">© {{.Year}} BalasEmail</div>
+  </footer>
+  <script src="/static/landing.js"></script>
+</body>
+</html>

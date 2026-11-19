@@ -1,0 +1,66 @@
+# Alerts derived from the PRD KPIs (docs/PRD.md §3). Each rule is the
+# measurable definition of a target.
+groups:
+  - name: balasemail-kpi
+    rules:
+      - alert: HardBounceRateHigh            # KPI: hard bounce < 2% (sync rejections + async DSN)
+        expr: |
+          sum(rate(balasemail_bounces_total{kind="hard"}[1h]))
+            / clamp_min(sum(rate(balasemail_emails_sent_total{status=~"sent|bounced"}[1h])), 1e-9) > 0.02
+        for: 30m
+        labels: { severity: warning }
+        annotations: { summary: "Hard bounce rate above 2% (PRD KPI)" }
+
+      - alert: OTPLatencyP95High             # KPI: OTP p95 < 10s
+        expr: histogram_quantile(0.95, sum(rate(balasemail_otp_delivery_seconds_bucket[10m])) by (le)) > 10
+        for: 10m
+        labels: { severity: critical }
+        annotations: { summary: "OTP delivery p95 above 10 seconds" }
+
+      - alert: SpamComplaintRateHigh         # KPI: complaints < 0.1%
+        expr: |
+          sum(rate(balasemail_email_events_total{type="complaint"}[6h]))
+            / clamp_min(sum(rate(balasemail_emails_sent_total{status="sent"}[6h])), 1e-9) > 0.001
+        for: 1h
+        labels: { severity: warning }
+        annotations: { summary: "Spam complaint rate above 0.1%" }
+
+      - alert: APIHighErrorRate              # supports KPI: uptime 99.9%
+        expr: |
+          sum(rate(balasemail_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(balasemail_http_requests_total[5m])), 1e-9) > 0.001
+        for: 10m
+        labels: { severity: critical }
+        annotations: { summary: "API 5xx ratio above 0.1%" }
+
+      - alert: APILatencyP95High             # NFR: API p95 < 300ms
+        expr: histogram_quantile(0.95, sum(rate(balasemail_http_request_duration_seconds_bucket[5m])) by (le)) > 0.3
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "API p95 latency above 300ms" }
+
+      - alert: JobsDeadLettering
+        expr: sum(increase(balasemail_jobs_processed_total{outcome="dead"}[15m])) > 10
+        labels: { severity: warning }
+        annotations: { summary: "Background jobs are failing permanently" }
+
+      - alert: SenderDomainAuthFailing      # periodic DNS re-check found broken SPF/DKIM
+        expr: sum(increase(balasemail_domain_checks_total{result="failing"}[1h])) > 0
+        labels: { severity: warning }
+        annotations: { summary: "A verified sender domain lost SPF/DKIM; its sends are blocked" }
+
+      - alert: WebhookDeliveryFailing
+        expr: |
+          sum(rate(balasemail_webhook_deliveries_total{outcome=~"retry|rejected"}[30m]))
+            / clamp_min(sum(rate(balasemail_webhook_deliveries_total[30m])), 1e-9) > 0.2
+        for: 30m
+        labels: { severity: info }
+        annotations: { summary: "More than 20% of customer webhook calls fail" }
+
+      - alert: SMSFailuresHigh
+        expr: |
+          sum(rate(balasemail_sms_sent_total{status="failed"}[30m]))
+            / clamp_min(sum(rate(balasemail_sms_sent_total[30m])), 1e-9) > 0.05
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "More than 5% of SMS fail across all providers" }

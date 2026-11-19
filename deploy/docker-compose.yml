@@ -1,0 +1,64 @@
+# Local full stack. Emails are delivered to Mailpit (http://localhost:8025),
+# SMS go to the log provider, metrics to Prometheus (http://localhost:9095).
+x-app: &app
+  build: { context: .., dockerfile: Dockerfile }
+  restart: unless-stopped
+  depends_on:
+    postgres: { condition: service_healthy }
+  environment:
+    APP_ENV: development
+    DEV_SKIP_DNS_CHECK: "true"
+    DATABASE_URL: postgres://balasemail:balasemail@postgres:5432/balasemail?sslmode=disable
+    PUBLIC_BASE_URL: http://localhost:8080
+    UPSTREAM_SMTP_HOST: mailpit
+    UPSTREAM_SMTP_PORT: "1025"
+    SMTP_HOSTNAME: mx.balasemail.local
+    SMTP_SUBMISSION_ADDR: ":2587"
+    SMTP_INBOUND_ADDR: ":2525"
+    SMS_DOMAIN: sms.balasemail.local
+    BOUNCE_DOMAIN: bounces.balasemail.local
+    SMS_PROVIDERS: log
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: balasemail
+      POSTGRES_PASSWORD: balasemail
+      POSTGRES_DB: balasemail
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U balasemail"]
+      interval: 3s
+      retries: 20
+
+  api:
+    <<: *app
+    entrypoint: ["/usr/local/bin/api"]
+    ports: ["8080:8080"]
+
+  worker:
+    <<: *app
+    entrypoint: ["/usr/local/bin/worker"]
+
+  smtpd:
+    <<: *app
+    entrypoint: ["/usr/local/bin/smtpd"]
+    ports: ["2587:2587", "2525:2525"]
+
+  mailpit:
+    image: axllent/mailpit:v1.20
+    ports: ["8025:8025"]
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["9095:9090"]
+
+volumes:
+  pgdata:

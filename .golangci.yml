@@ -1,0 +1,31 @@
+version: "2"
+linters:
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    - noctx
+    - revive
+    - sqlclosecheck
+    - unconvert
+  settings:
+    gosec:
+      excludes:
+        - G104 # unhandled errors on best-effort writes are intentional
+        - G115 # integer conversions are bounded by validation
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gosec, noctx, bodyclose]
+formatters:
+  enable:
+    - gofmt
+issues:
+  # Report every finding (the default hides repeats of the same issue).
+  max-issues-per-linter: 0
+  max-same-issues: 0
